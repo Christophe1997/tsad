@@ -1,6 +1,7 @@
-from torch.utils.data import Dataset
 import numpy as np
-import utils
+from torch.utils.data import Dataset
+
+from tsad import utils
 
 
 class TimeSeries(Dataset):
@@ -15,12 +16,11 @@ class TimeSeries(Dataset):
         if len(data.shape) != 1:
             raise ValueError("Only support 1D data")
 
-        self.data = utils.scan1d(data, history_w + pred_w, stride=stride)
+        data = utils.scan1d(data, history_w + pred_w, stride=stride)
+        self.x, self.y = np.hsplit(self.data, [self.history_w])
 
     def __getitem__(self, index):
-        return self.data[index, :self.history_w], self.data[index, self.history_w + 1:]
+        return self.x[index], self.y[index]
 
-    def x_and_y(self):
-        if self.x is None:
-            self.x, self.y = np.hsplit(self.data, [self.history_w])
-        return self.x, self.y
+    def __len__(self):
+        return len(self.x)
