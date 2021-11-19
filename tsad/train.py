@@ -5,6 +5,7 @@ from tsad.model import RNNModel
 
 parser = argparse.ArgumentParser("Train Script")
 parser.add_argument("--data", type=str, help="root dir of data")
+parser.add_argument("--dataset", type=str, default="UCR", help="dataset type")
 parser.add_argument("--model", type=str, default="LSTM", help="model type")
 parser.add_argument("--verbose", dest="log_level", action="store_const", const=logging.DEBUG,
                     help="debug logging")
@@ -27,3 +28,4 @@ parser.add_argument("--batch_size", type=int, default=20, help="batch size")
 parser.add_argument("--epochs", type=int, default=50, help="epoch limit")
 
 args = parser.parse_args()
+
