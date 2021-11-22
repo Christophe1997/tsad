@@ -1,4 +1,5 @@
 import abc
+import math
 import os
 import numpy as np
 import pandas as pd
@@ -20,7 +21,7 @@ class TimeSeries(Dataset):
             raise ValueError("Only support 1D data")
 
         data = utils.scan1d(data, history_w + pred_w, stride=stride)
-        self.x, self.y = np.hsplit(self.data, [self.history_w])
+        self.x, self.y = np.hsplit(data, [self.history_w])
 
     def __getitem__(self, index):
         return self.x[index], self.y[index]
@@ -53,17 +54,15 @@ class UCRTSAD2021Dataset(CSVDataset):
         for file in self.files:
             fullpath = os.path.join(self.root_dir, file)
             file_name = file.split(".")[0]
-            idx, _, _, name, train_end, anomaly_start, anomay_end, = file_name.split("_")
-            meta = {
-                "index": idx,
-                "name": name,
-                "train_end": train_end,
-                "anomaly_start": anomaly_start,
-                "anomaly_end": anomay_end
-            }
+            idx, _, _, name, train_end, anomaly_start, anomaly_end, = file_name.split("_")
+            data_id = f"ucr_{idx}_{name}"
             data = pd.read_csv(fullpath).to_numpy()
+            anomaly_vect = np.zeros(len(data))
+            anomaly_vect[anomaly_start - 1: anomaly_end] = 1
+            indices = [train_end, len(data)]
+            train, test = np.split(data, indices)
 
-            yield meta, data
+            yield data_id, train, test, anomaly_vect
 
 
 class YahooS5Dataset(CSVDataset):
@@ -76,16 +75,33 @@ class YahooS5Dataset(CSVDataset):
     def __iter__(self):
         for prefix, file in self.files:
             full_path = os.path.join(self.root_dir, prefix, file)
-            data = pd.read_csv(full_path, usecols=["value", "anomaly"])
-            meta = {
-                "prefix": prefix,
-                "anomaly_vect": data["anomaly"].to_numpy(),
-            }
+            try:
+                data = pd.read_csv(full_path, usecols=["value", "anomaly"])
+            except ValueError:
+                data = pd.read_csv(full_path, usecols=["value", "is_anomaly"])
+
+            data.columns = ["value", "label"]
+            data_id = f"yahoo_{prefix}_{file.split('.')[0]}"
+            anomaly_vect = data["label"].to_numpy()
             data = data["value"].to_numpy()
-            yield meta, data
+            indices = [math.floor(len(data) * 0.7), len(data)]
+            train, test = np.split(data, indices)
+
+            yield data_id, train, test, anomaly_vect
 
 
 class KPIDataset(CSVDataset):
-    def __init__(self, root_dir):
+    def __init__(self, root_dir, train="phase2_train.csv", test="phase2_test.csv"):
         super(KPIDataset, self).__init__(root_dir)
-        
+        self.train_data = pd.read_csv(os.path.join(self.root_dir, train), usecols=["value", "label", "KPI ID"])
+        self.test_data = pd.read_csv(os.path.join(self.root_dir, test), usecols=["value", "label", "KPI ID"])
+
+    def __iter__(self):
+        for kpi_id in self.train_data["KPI ID"].unique():
+            train_df = self.train_data.loc[self.train_data["KPI ID" == kpi_id]][["value", "label"]]
+            test_df = self.test_data.loc[self.test_data["KPI ID" == kpi_id]][["value", "label"]]
+            data_id = f"kpi_{kpi_id}"
+            train = train_df["value"].to_numpy()
+            test = test_df["value"].to_numpy()
+            anomaly_vect = np.hstack((train_df["label"].to_numpy(), test_df["label"].to_numpy()))
+            yield data_id, train, test, anomaly_vect

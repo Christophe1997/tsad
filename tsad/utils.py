@@ -33,3 +33,7 @@ def create_dir(full_path):
         os.makedirs(dir_path)
 
     return dir_path
+
+
+def dict2str(d: dict):
+    return "\n".join(f"{k}: {v}" for k, v in d.items())
