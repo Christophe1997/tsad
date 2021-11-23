@@ -1,6 +1,7 @@
 import abc
 import math
 import os
+
 import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
@@ -14,8 +15,6 @@ class TimeSeries(Dataset):
         super(TimeSeries, self).__init__()
         self.history_w = history_w
         self.pred_w = pred_w
-        self.x = None
-        self.y = None
         data = np.squeeze(data)
         if len(data.shape) != 1:
             raise ValueError("Only support 1D data")
@@ -55,22 +54,27 @@ class UCRTSAD2021Dataset(CSVDataset):
             fullpath = os.path.join(self.root_dir, file)
             file_name = file.split(".")[0]
             idx, _, _, name, train_end, anomaly_start, anomaly_end, = file_name.split("_")
+            train_end = int(train_end)
+            anomaly_start = int(anomaly_start)
+            anomaly_end = int(anomaly_end)
+
             data_id = f"ucr_{idx}_{name}"
             data = pd.read_csv(fullpath).to_numpy()
             anomaly_vect = np.zeros(len(data))
             anomaly_vect[anomaly_start - 1: anomaly_end] = 1
             indices = [train_end, len(data)]
-            train, test = np.split(data, indices)
+            train, test, _ = np.split(data, indices)
 
             yield data_id, train, test, anomaly_vect
 
 
 class YahooS5Dataset(CSVDataset):
-    def __init__(self, root_dir):
+    def __init__(self, root_dir, test_prop=0.3):
         super(YahooS5Dataset, self).__init__(root_dir)
         prefixs = os.listdir(self.root_dir)
         self.files = [(prefix, file) for prefix in os.listdir(self.root_dir)
                       for file in os.listdir(os.path.join(self.root_dir, prefix))]
+        self.train_prop = 1 - test_prop
 
     def __iter__(self):
         for prefix, file in self.files:
@@ -84,8 +88,8 @@ class YahooS5Dataset(CSVDataset):
             data_id = f"yahoo_{prefix}_{file.split('.')[0]}"
             anomaly_vect = data["label"].to_numpy()
             data = data["value"].to_numpy()
-            indices = [math.floor(len(data) * 0.7), len(data)]
-            train, test = np.split(data, indices)
+            indices = [math.floor(len(data) * self.train_prop), len(data)]
+            train, test, _ = np.split(data, indices)
 
             yield data_id, train, test, anomaly_vect
 

@@ -26,6 +26,7 @@ class RNNModel(nn.Module):
         res = res.view(-1, self.hidden_dim)
         res = self.fc(res)
         res = res.view(-1, batch_size, self.out_window)
+        res = res[-1, :]
         return res, hidden
 
     def init_hidden(self, batch_size):
@@ -35,3 +36,7 @@ class RNNModel(nn.Module):
             return init(), init()
         else:
             return init()
+
+    def init_weight(self):
+        nn.init.orthogonal_(self.rnn.weight)
+        nn.init.kaiming_normal_(self.fc)
