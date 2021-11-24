@@ -1,4 +1,3 @@
-import datetime
 import logging
 import os
 import sys
@@ -17,12 +16,23 @@ def scan1d(arr: np.ndarray, window_size, stride=1):
     return np.lib.stride_tricks.as_strided(arr, shape, strides=(elem_size * stride, elem_size), writeable=False)
 
 
-def get_logger(args):
-    res = logging.getLogger(__name__)
-    fp = "{:.0f}.log".format(datetime.datetime.now().timestamp())
+class CustomFormatter(logging.Formatter):
+
+    def __init__(self, extra_field, *args, **kwargs):
+        super(CustomFormatter, self).__init__(*args, **kwargs)
+        self.extra_field = extra_field
+
+    def format(self, record) -> str:
+        if not hasattr(record, self.extra_field):
+            setattr(record, self.extra_field, "")
+        return super(CustomFormatter, self).format(record)
+
+
+def get_logger(args, fp):
+    res = logging.getLogger("root")
     fp_handler = logging.FileHandler(fp, mode='a+', encoding='utf8')
     s_handler = logging.StreamHandler(stream=sys.stdout)
-    formatter = logging.Formatter('[%(asctime)s] %(levelname)s [%(name)s] %(message)s\n%(detail)s')
+    formatter = CustomFormatter('detail', '[%(asctime)s] %(levelname)s [%(name)s] %(message)s%(detail)s')
     fp_handler.setFormatter(formatter)
     s_handler.setFormatter(formatter)
     res.addHandler(fp_handler)

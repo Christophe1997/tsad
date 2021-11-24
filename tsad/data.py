@@ -4,6 +4,7 @@ import os
 
 import numpy as np
 import pandas as pd
+import torch
 from torch.utils.data import Dataset
 
 from tsad import utils
@@ -21,6 +22,10 @@ class TimeSeries(Dataset):
 
         data = utils.scan1d(data, history_w + pred_w, stride=stride)
         self.x, self.y = np.hsplit(data, [self.history_w])
+        self.x = torch.tensor(self.x).float()
+        self.y = torch.tensor(self.y).float()
+
+        self.transform = transform
 
     def __getitem__(self, index):
         return self.x[index], self.y[index]
@@ -42,6 +47,10 @@ class CSVDataset(abc.ABC):
     def __iter__(self):
         pass
 
+    @staticmethod
+    def normalized(data):
+        return (data - np.min(data)) / (np.max(data) - np.min(data))
+
 
 class UCRTSAD2021Dataset(CSVDataset):
 
@@ -60,6 +69,7 @@ class UCRTSAD2021Dataset(CSVDataset):
 
             data_id = f"ucr_{idx}_{name}"
             data = pd.read_csv(fullpath).to_numpy()
+            data = self.normalized(data)
             anomaly_vect = np.zeros(len(data))
             anomaly_vect[anomaly_start - 1: anomaly_end] = 1
             indices = [train_end, len(data)]
@@ -71,7 +81,6 @@ class UCRTSAD2021Dataset(CSVDataset):
 class YahooS5Dataset(CSVDataset):
     def __init__(self, root_dir, test_prop=0.3):
         super(YahooS5Dataset, self).__init__(root_dir)
-        prefixs = os.listdir(self.root_dir)
         self.files = [(prefix, file) for prefix in os.listdir(self.root_dir)
                       for file in os.listdir(os.path.join(self.root_dir, prefix))]
         self.train_prop = 1 - test_prop
@@ -88,6 +97,7 @@ class YahooS5Dataset(CSVDataset):
             data_id = f"yahoo_{prefix}_{file.split('.')[0]}"
             anomaly_vect = data["label"].to_numpy()
             data = data["value"].to_numpy()
+            data = self.normalized(data)
             indices = [math.floor(len(data) * self.train_prop), len(data)]
             train, test, _ = np.split(data, indices)
 
@@ -106,6 +116,8 @@ class KPIDataset(CSVDataset):
             test_df = self.test_data.loc[self.test_data["KPI ID" == kpi_id]][["value", "label"]]
             data_id = f"kpi_{kpi_id}"
             train = train_df["value"].to_numpy()
+            train = self.normalized(train)
             test = test_df["value"].to_numpy()
+            test = self.normalized(test)
             anomaly_vect = np.hstack((train_df["label"].to_numpy(), test_df["label"].to_numpy()))
             yield data_id, train, test, anomaly_vect

@@ -38,5 +38,10 @@ class RNNModel(nn.Module):
             return init()
 
     def init_weight(self):
-        nn.init.orthogonal_(self.rnn.weight)
-        nn.init.kaiming_normal_(self.fc)
+        for name, param in self.rnn.named_parameters():
+            if "bias" in name:
+                nn.init.constant_(param, 1.0)
+            elif "weight" in name:
+                nn.init.orthogonal_(param)
+
+        nn.init.kaiming_normal_(self.fc.weight)
