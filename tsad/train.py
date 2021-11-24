@@ -28,12 +28,12 @@ parser.add_argument("-O", "--output", type=str, default="model.pt", help="model 
 parser.add_argument("--seed", type=int, default=1234, help="random seed, default 1234")
 parser.add_argument("--rnn_type", type=str, default="LSTM",
                     help="RNN type used for train(LSTM, GRU), default 'LSTM'")
-parser.add_argument("--hidden_dim", type=int, default=256,
-                    help="number of hidden units per layer, default 256")
+parser.add_argument("--hidden_dim", type=int, default=128,
+                    help="number of hidden units per layer, default 128")
 parser.add_argument("--num_layers", type=int, default=2,
                     help="number of hidden layers, default 2")
-parser.add_argument("--history_w", type=int, default=30,
-                    help="history window size for predicting, default 30")
+parser.add_argument("--history_w", type=int, default=32,
+                    help="history window size for predicting, default 32")
 parser.add_argument("--predict_w", type=int, default=1,
                     help="predict window size, default 1")
 parser.add_argument("--stride", type=int, default=1,
@@ -61,7 +61,8 @@ class Train:
         self.config = config
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = self.get_model().to(self.device)
-        self.dataset = iter(self.get_data())
+        self.dataset = self.get_data()
+        self.dataset_g = iter(self.dataset)
         self.criterion = self.get_loss()
         self.optimizer = self.get_optim(self.model)
         self.log_fp = "{:.0f}.log".format(datetime.datetime.now().timestamp())
@@ -96,15 +97,21 @@ class Train:
         else:
             raise ValueError(f"not support --dataset arg: {self.config.dataset}")
 
-    def run_once(self):
+    def run_once(self, file=None):
         try:
-            data_id, train, test, anomaly_vect = next(self.dataset)
+            if file is not None:
+                if self.config.dataset != "Yahoo":
+                    self.dataset.load_one(file)
+                else:
+                    self.dataset.load_one("A1Benchmark", file)
+            else:
+                data_id, train, test, anomaly_vect = next(self.dataset_g)
         except StopIteration:
             self.logger.warning("Dataset exhausted.")
             return False
 
         self.logger.info(f"Start training for {data_id} with config",
-                         extra={"detail": f"\nlog_file: {self.log_fp}" + utils.dict2str(vars(self.config))
+                         extra={"detail": f"\nlog_file: {self.log_fp}\n" + utils.dict2str(vars(self.config))
                                 })
 
         if self.device.type == "cuda":
@@ -126,6 +133,9 @@ class Train:
             valid_losses.append(valid_loss)
 
         return train_losses, valid_losses
+
+    def eval(self, test_data, label, delta):
+        pass
 
     def valid(self, valid_data):
         self.model.eval()
