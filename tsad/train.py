@@ -127,6 +127,7 @@ class Train:
         self.model.init_weight()
         train_losses = []
         valid_losses = []
+        best_valid_loss = None
         for epoch in range(self.config.epochs):
             start_time = time.time()
             losses = self.train(prepared_data.train, epoch)
@@ -136,6 +137,10 @@ class Train:
                 epoch + 1, time.time() - start_time, train_loss, valid_loss))
             train_losses.append(train_loss)
             valid_losses.append(valid_loss)
+            if not best_valid_loss or valid_loss < best_valid_loss:
+                with open(f"{self.config.res}/{self.config.output}", "wb") as f:
+                    torch.save(self.model, f)
+                best_valid_loss = valid_loss
 
         res_y_, res_y, label, m = self.eval(*prepared_data.test)
         self.logger.info("Measure on test set: precision:"
@@ -144,6 +149,10 @@ class Train:
         return data_id, train_losses, valid_losses, res_y_, res_y, label, m
 
     def eval(self, test_data, label, delta=None):
+        with open(f"{self.config.res}/{self.config.output}", "rb") as f:
+            self.model = torch.load(f)
+        self.model.rnn.flatten_parameters()
+
         if delta is None:
             delta = self.delta
         self.logger.info(f"eval on test set with threshold: {delta}")
