@@ -73,3 +73,20 @@ def repackage_hidden(hidden):
         return hidden.detach()
     else:
         return tuple(repackage_hidden(v) for v in hidden)
+
+
+def get_intevals(indexes):
+    if len(indexes) < 2:
+        return indexes
+
+    intervals = [indexes[0]]
+    last_idx = indexes[0]
+    for i, idx in enumerate(indexes[1:]):
+        if idx != indexes[i] + 1:
+            intervals.append(last_idx)
+            intervals.append(idx)
+        last_idx = idx
+
+    intervals.append(last_idx)
+
+    return intervals

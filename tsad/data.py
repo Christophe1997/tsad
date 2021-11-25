@@ -49,7 +49,8 @@ class CSVDataset(abc.ABC):
 
     @staticmethod
     def normalized(data):
-        return (data - np.min(data)) / (np.max(data) - np.min(data))
+        return (data - np.mean(data)) / np.std(data)
+        # return (data - np.min(data)) / (np.max(data) - np.min(data))
 
 
 class UCRTSAD2021Dataset(CSVDataset):
@@ -61,20 +62,19 @@ class UCRTSAD2021Dataset(CSVDataset):
     def load_one(self, file):
         fullpath = os.path.join(self.root_dir, file)
         file_name = file.split(".")[0]
-        idx, _, _, name, train_end, anomaly_start, anomaly_end, = file_name.split("_")
+        idx, _, _, name, train_end, anomaly_start, anomaly_end = file_name.split("_")
         train_end = int(train_end)
         anomaly_start = int(anomaly_start)
         anomaly_end = int(anomaly_end)
 
         data_id = f"ucr_{idx}_{name}"
         data = pd.read_csv(fullpath).to_numpy()
-        data = self.normalized(data)
         anomaly_vect = np.zeros(len(data))
         anomaly_vect[anomaly_start - 1: anomaly_end] = 1
         indices = [train_end, len(data)]
         train, test, _ = np.split(data, indices)
 
-        return data_id, train, test, anomaly_vect
+        return data_id, self.normalized(train), self.normalized(test), anomaly_vect
 
     def __iter__(self):
         for file in self.files:
@@ -99,11 +99,10 @@ class YahooS5Dataset(CSVDataset):
         data_id = f"yahoo_{prefix}_{file.split('.')[0]}"
         anomaly_vect = data["label"].to_numpy()
         data = data["value"].to_numpy()
-        data = self.normalized(data)
         indices = [math.floor(len(data) * self.train_prop), len(data)]
         train, test, _ = np.split(data, indices)
 
-        return data_id, train, test, anomaly_vect
+        return data_id, self.normalized(train), self.normalized(test), anomaly_vect
 
     def __iter__(self):
         for prefix, file in self.files:
@@ -125,7 +124,7 @@ class KPIDataset(CSVDataset):
         test = test_df["value"].to_numpy()
         test = self.normalized(test)
         anomaly_vect = np.hstack((train_df["label"].to_numpy(), test_df["label"].to_numpy()))
-        return data_id, train, test, anomaly_vect
+        return data_id, self.normalized(train), self.normalized(test), anomaly_vect
 
     def __iter__(self):
         for kpi_id in self.train_data["KPI ID"].unique():
