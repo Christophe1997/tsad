@@ -57,7 +57,7 @@ parser.add_argument("--per_batch", type=int, default=10, help="log frequence per
 parser.add_argument("--res", type=str, default="out", help="log files and result files dir")
 parser.add_argument("--one_file", type=str, default=None, help="only train on the specific data")
 parser.add_argument("--sigma", type=float, default=None, help="sigma for anomaly detecting threshold")
-parser.add_argument("--device", type=str, default="cuda", help="GPU device")
+parser.add_argument("--device", type=str, default="cuda", help="GPU device, if there is no gpu then use cpu")
 
 args = parser.parse_args()
 
