@@ -49,8 +49,9 @@ class CSVDataset(abc.ABC):
 
     @staticmethod
     def normalized(data):
-        return (data - np.mean(data)) / np.std(data)
-        # return (data - np.min(data)) / (np.max(data) - np.min(data))
+        return (data - data.mean(axis=0)) / data.std(axis=0)
+        # data_std = (data - data.min(axis=0)) / (data.max(axis=0) - data.min(axis=0))
+        # return data_std * 2 - 1
 
 
 class UCRTSAD2021Dataset(CSVDataset):

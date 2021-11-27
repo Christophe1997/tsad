@@ -25,15 +25,14 @@ parser.add_argument("--data", type=str, default="./data/UCR_TimeSeriesAnomalyDat
                     help="root dir of data")
 parser.add_argument("--dataset", type=str, default="UCR",
                     help="dataset type(UCR, KPI, Yahoo), default 'UCR'")
-parser.add_argument("--verbose", dest="log_level", action="store_const", const=logging.DEBUG,
+parser.add_argument("--verbose", dest="log_level", action="store_const", const=logging.DEBUG, default=logging.INFO,
                     help="debug logging")
-parser.set_defaults(log_level=logging.INFO)
 parser.add_argument("-O", "--output", type=str, default="model.pt", help="model save path, default 'model.pt'")
 parser.add_argument("--seed", type=int, default=1234, help="random seed, default 1234")
 parser.add_argument("--rnn_type", type=str, default="LSTM",
                     help="RNN type used for train(LSTM, GRU), default 'LSTM'")
-parser.add_argument("--hidden_dim", type=int, default=128,
-                    help="number of hidden units per layer, default 128")
+parser.add_argument("--hidden_dim", type=int, default=512,
+                    help="number of hidden units per layer, default 512")
 parser.add_argument("--num_layers", type=int, default=2,
                     help="number of hidden layers, default 2")
 parser.add_argument("--history_w", type=int, default=32,
@@ -49,15 +48,15 @@ parser.add_argument("--epochs", type=int, default=50, help="epoch limit, default
 parser.add_argument("--valid_prop", type=float, default=0.2, help="validation set prop, default 0.2")
 parser.add_argument("--test_prop", type=float, default=0.3,
                     help="test set prop(only work for some dataset), default 0.3")
-parser.add_argument("--loss", type=str, default="L1", help="loss function, default 'L1'")
+parser.add_argument("--loss", type=str, default="MAE", help="loss function, default 'MAE'")
 parser.add_argument("--optim", type=str, default="adam", help="optimizer, default 'adam'")
 parser.add_argument("--lr", type=float, default=0.001, help="learning rate, default 1e-3")
 parser.add_argument("--weight_decay", type=float, default=1e-4, help="weight decay, default 1e-4")
 parser.add_argument("--clip", type=float, default=0.25, help="gradient clipping, default 0.25")
 parser.add_argument("--per_batch", type=int, default=10, help="log frequence per batch, default 10")
 parser.add_argument("--res", type=str, default="out", help="log files and result files dir")
-parser.add_argument("--one_file", type=str, help="only train on the specific data")
-parser.set_defaults(one_file=None)
+parser.add_argument("--one_file", type=str, default=None, help="only train on the specific data")
+parser.add_argument("--sigma", type=float, default=None, help="sigma for anomaly detecting threshold")
 
 args = parser.parse_args()
 
@@ -75,7 +74,7 @@ class Train:
 
         self.timestamp = "{:.0f}".format(datetime.datetime.now().timestamp())
         self.logger = utils.get_logger(self.config, f"{self.config.res}/{self.timestamp}.log")
-        self.delta = None
+        self.sigma = None
 
     def get_model(self):
         if self.config.rnn_type in ["LSTM", "GRU"]:
@@ -85,8 +84,10 @@ class Train:
             raise ValueError(f"not support --rnn_type arg: {self.config.rnn_type}")
 
     def get_loss(self):
-        if self.config.loss == "L1":
+        if self.config.loss == "MAE":
             return nn.L1Loss()
+        elif self.config.loss == "MSE":
+            return nn.MSELoss()
         else:
             raise ValueError(f"not support --loss arg: {self.config.loss}")
 
@@ -137,25 +138,26 @@ class Train:
                 epoch + 1, time.time() - start_time, train_loss, valid_loss))
             train_losses.append(train_loss)
             valid_losses.append(valid_loss)
-            if not best_valid_loss or valid_loss < best_valid_loss:
+            if best_valid_loss is None or valid_loss < best_valid_loss:
                 with open(f"{self.config.res}/{self.config.output}", "wb") as f:
                     torch.save(self.model, f)
                 best_valid_loss = valid_loss
 
-        res_y_, res_y, label, m = self.eval(*prepared_data.test)
+        self.logger.info(f"Save model with valid loss: {best_valid_loss}, sigma: {self.sigma}")
+        res_y_, res_y, label, m = self.eval(*prepared_data.test, threshold=self.config.sigma)
         self.logger.info("Measure on test set: precision:"
                          " {:0<5.2f}, recall: {:0<5.2f}, F1 score: {:0<5.2f}".format(*m))
 
         return data_id, train_losses, valid_losses, res_y_, res_y, label, m
 
-    def eval(self, test_data, label, delta=None):
+    def eval(self, test_data, label, threshold=None):
         with open(f"{self.config.res}/{self.config.output}", "rb") as f:
             self.model = torch.load(f)
         self.model.rnn.flatten_parameters()
 
-        if delta is None:
-            delta = self.delta
-        self.logger.info(f"eval on test set with threshold: {delta}")
+        if threshold is None:
+            threshold = 3 * self.sigma
+        self.logger.info(f"eval on test set with threshold: {threshold}")
         self.model.eval()
         res_y = []
         res_y_ = []
@@ -164,31 +166,31 @@ class Train:
         tn = 0
         fn = 0
         label_g = iter(label)
-        hidden = self.model.init_hidden(self.config.batch_size)
+        hidden = self.model.init_hidden(1)
         with torch.no_grad():
             for x_batch, y_batch in test_data:
                 hidden = utils.repackage_hidden(hidden)
-                x_batch = x_batch.view(-1, self.config.batch_size, self.config.history_w).to(self.device)
+                x_batch = x_batch.view(-1, 1, self.config.history_w).to(self.device)
                 out, hidden = self.model(x_batch, hidden)
-                res_y_.append(out.squeeze())
-                res_y.append(y_batch.squeeze())
-                is_pos = np.array(np.abs(res_y_[-1] - res_y[-1]) > delta)
-                label_batch = np.array(next(label_g) == 1)
-                for i, val in enumerate(label_batch):
-                    if is_pos[i] and val:
-                        tp += 1
-                    elif is_pos[i]:
-                        fp += 1
-                    elif val:
-                        fn += 1
-                    else:
-                        tn += 1
+                loss = self.criterion(out, y_batch).item()
+                res_y_.append(out.item())
+                res_y.append(y_batch.item())
+                is_pos = loss > threshold
+                is_true_pos = next(label_g).item() == 1
+                if is_pos and is_true_pos:
+                    tp += 1
+                elif is_pos:
+                    fp += 1
+                elif is_true_pos:
+                    fn += 1
+                else:
+                    tn += 1
 
         self.logger.info(f"tp: {tp}, tn: {tn}, fp: {fp}, fn: {fn}")
         precision = tp / (tp + fp) if (tp + fp) != 0 else 0
         recall = tp / (tp + fn) if (tp + fn) != 0 else 0
         f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) != 0 else 0
-        return np.hstack(res_y_), np.hstack(res_y), label.dataset, Measure(precision, recall, f1_score)
+        return np.array(res_y_), np.array(res_y), label.dataset, Measure(precision, recall, f1_score)
 
     def valid(self, valid_data):
         self.model.eval()
@@ -203,7 +205,11 @@ class Train:
                 out, hidden = self.model(x_batch, hidden)
                 total_loss += self.criterion(out, y_batch).item()
 
-        return total_loss / total_batches
+        loss = total_loss / total_batches
+        if self.sigma is None or self.sigma > loss:
+            self.sigma = loss
+
+        return loss
 
     def train(self, train_data, epoch):
         train_loss = []
@@ -235,7 +241,7 @@ class Train:
 
     def prepare_data(self, train, test, anomaly_vect):
 
-        self.delta = np.std(train)
+        self.sigma = np.std(train)
         train_ts = TimeSeries(train, self.config.history_w,
                               pred_w=self.config.predict_w,
                               stride=self.config.stride)
@@ -250,12 +256,11 @@ class Train:
         assert len(test_set) == len(anomaly_vect), f"{len(test_set)} != {len(anomaly_vect)}"
 
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.config.batch_size,
-                                                   drop_last=True, shuffle=True)
+                                                   drop_last=True, shuffle=False)
         valid_loader = torch.utils.data.DataLoader(valid_set, batch_size=self.config.batch_size, drop_last=True)
 
-        test_loader = torch.utils.data.DataLoader(test_set, batch_size=self.config.batch_size, drop_last=True)
-        anomaly_vect_loader = torch.utils.data.DataLoader(anomaly_vect, batch_size=self.config.batch_size,
-                                                          drop_last=True)
+        test_loader = torch.utils.data.DataLoader(test_set, batch_size=1)
+        anomaly_vect_loader = torch.utils.data.DataLoader(anomaly_vect, batch_size=1)
         return PreparedData(train=train_loader, valid=valid_loader, test=(test_loader, anomaly_vect_loader))
 
     def __iter__(self):
@@ -279,9 +284,14 @@ class Train:
                                  line={"color": "green"}), row=2, col=1)
         min_y = np.min(y)
         max_y = np.max(y)
-        for idx in intervals:
-            fig.add_shape(go.layout.Shape(type="line", xref='x', x0=idx, y0=min_y, x1=idx, y1=max_y,
-                                          line={"dash": "dash", "color": "blue"}), row=2, col=1)
+        for x, y in intervals:
+            if x == y:
+                fig.add_shape(go.layout.Shape(type="line", xref='x', x0=x, y0=min_y, x1=x, y1=max_y,
+                                              line={"dash": "dash", "color": "LightSkyBlue"}), row=2, col=1)
+            else:
+                fig.add_shape(go.layout.Shape(type="rect", xref='x', x0=x, y0=min_y, x1=y, y1=max_y,
+                                              line={"color": "LightSkyBlue"}, fillcolor="LightSkyBlue", opacity=0.5),
+                              row=2, col=1)
 
         fig.update_layout(title="precision: {:0<5.2f}, recall: {:0<5.2f}, F1 score: {:0<5.2f}".format(*measure))
 

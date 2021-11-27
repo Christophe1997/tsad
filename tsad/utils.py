@@ -79,14 +79,16 @@ def get_intevals(indexes):
     if len(indexes) < 2:
         return indexes
 
-    intervals = [indexes[0]]
+    res = []
+    interval = [indexes[0]]
     last_idx = indexes[0]
     for i, idx in enumerate(indexes[1:]):
         if idx != indexes[i] + 1:
-            intervals.append(last_idx)
-            intervals.append(idx)
+            interval.append(last_idx)
+            res.append(interval)
+            interval = [idx]
         last_idx = idx
+    interval.append(last_idx)
+    res.append(interval)
 
-    intervals.append(last_idx)
-
-    return intervals
+    return res
