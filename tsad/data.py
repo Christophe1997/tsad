@@ -12,7 +12,7 @@ from tsad import utils
 
 class TimeSeries(Dataset):
 
-    def __init__(self, data: np.ndarray, history_w, pred_w=1, stride=1, transform=None):
+    def __init__(self, data: np.ndarray, history_w, pred_w=1, stride=1, transform=None, device=None):
         super(TimeSeries, self).__init__()
         self.history_w = history_w
         self.pred_w = pred_w
@@ -22,8 +22,8 @@ class TimeSeries(Dataset):
 
         data = utils.scan1d(data, history_w + pred_w, stride=stride)
         self.x, self.y = np.hsplit(data, [self.history_w])
-        self.x = torch.tensor(self.x).float()
-        self.y = torch.tensor(self.y).float()
+        self.x = torch.tensor(self.x).float().to(device)
+        self.y = torch.tensor(self.y).float().to(device)
 
         self.transform = transform
 

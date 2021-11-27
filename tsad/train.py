@@ -247,14 +247,14 @@ class Train:
         self.sigma = np.std(train)
         train_ts = TimeSeries(train, self.config.history_w,
                               pred_w=self.config.predict_w,
-                              stride=self.config.stride)
+                              stride=self.config.stride, device=self.device)
         size = len(train_ts)
         valid_size = int(size * self.config.valid_prop)
         train_set, valid_set = torch.utils.data.random_split(train_ts, [size - valid_size, valid_size])
 
         test_set = TimeSeries(test, self.config.history_w,
                               pred_w=self.config.predict_w,
-                              stride=self.config.stride)
+                              stride=self.config.stride, device=self.device)
         anomaly_vect = anomaly_vect[len(train) + self.config.history_w:]
         assert len(test_set) == len(anomaly_vect), f"{len(test_set)} != {len(anomaly_vect)}"
 
