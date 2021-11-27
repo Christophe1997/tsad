@@ -65,7 +65,7 @@ def get_cuda_usage():
         return "{}: {:.2f}GB/{:.2f}GB({:.2f}%)".format(device_name,
                                                        allocated_mem,
                                                        resolved_mem,
-                                                       allocated_mem / resolved_mem * 100)
+                                                       allocated_mem / resolved_mem * 100 if resolved_mem != 0 else 0)
 
 
 def repackage_hidden(hidden):
