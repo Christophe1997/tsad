@@ -1,17 +1,18 @@
 import argparse
-import logging
 import datetime
+import logging
 import os
 import time
+import traceback
 from collections import namedtuple
 
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import torch
+import torch.utils.data
+from plotly.subplots import make_subplots
 from torch import nn
 from torch import optim
-import torch.utils.data
 
 from tsad import utils
 from tsad.data import UCRTSAD2021Dataset, KPIDataset, YahooS5Dataset, TimeSeries
@@ -172,6 +173,7 @@ class Train:
             for x_batch, y_batch in test_data:
                 hidden = utils.repackage_hidden(hidden)
                 x_batch = x_batch.view(-1, 1, self.config.history_w).to(self.device)
+                y_batch = y_batch.to(self.device)
                 out, hidden = self.model(x_batch, hidden)
                 loss = self.criterion(out, y_batch).item()
                 res_y_.append(out.item())
@@ -306,9 +308,13 @@ np.random.seed(args.seed)
 os.makedirs(args.res, exist_ok=True)
 main = Train(args)
 
-if main.config.one_file is not None:
-    res = main.run_once(main.config.one_file)
-    main.stats(*res)
-else:
-    for res in main:
+# noinspection PyBroadException
+try:
+    if main.config.one_file is not None:
+        res = main.run_once(main.config.one_file)
         main.stats(*res)
+    else:
+        for res in main:
+            main.stats(*res)
+except Exception:
+    main.logger.error(traceback.format_exc())
