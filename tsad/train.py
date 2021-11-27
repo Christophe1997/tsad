@@ -57,6 +57,7 @@ parser.add_argument("--per_batch", type=int, default=10, help="log frequence per
 parser.add_argument("--res", type=str, default="out", help="log files and result files dir")
 parser.add_argument("--one_file", type=str, default=None, help="only train on the specific data")
 parser.add_argument("--sigma", type=float, default=None, help="sigma for anomaly detecting threshold")
+parser.add_argument("--device", type=str, default="cuda", help="GPU device")
 
 args = parser.parse_args()
 
@@ -65,7 +66,7 @@ class Train:
 
     def __init__(self, config):
         self.config = config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(self.config.device if torch.cuda.is_available() else "cpu")
         self.model = self.get_model().to(self.device)
         self.dataset = self.get_data()
         self.dataset_g = iter(self.dataset)
