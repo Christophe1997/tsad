@@ -1,9 +1,5 @@
-import argparse
 import datetime
-import logging
-import os
 import time
-import traceback
 from collections import namedtuple
 
 import numpy as np
@@ -21,58 +17,17 @@ from tsad.model import RNNModel
 PreparedData = namedtuple('PreparedData', field_names=["train", "valid", "test"])
 Measure = namedtuple('Measure', field_names=["precision", "recall", "f1_score"])
 
-parser = argparse.ArgumentParser("Train Script")
-parser.add_argument("--data", type=str, default="./data/UCR_TimeSeriesAnomalyDatasets2021/UCR_Anomaly_FullData",
-                    help="root dir of data")
-parser.add_argument("--dataset", type=str, default="UCR",
-                    help="dataset type(UCR, KPI, Yahoo), default 'UCR'")
-parser.add_argument("--verbose", dest="log_level", action="store_const", const=logging.DEBUG, default=logging.INFO,
-                    help="debug logging")
-parser.add_argument("-O", "--output", type=str, default="model.pt", help="model save path, default 'model.pt'")
-parser.add_argument("--seed", type=int, default=1234, help="random seed, default 1234")
-parser.add_argument("--rnn_type", type=str, default="LSTM",
-                    help="RNN type used for train(LSTM, GRU), default 'LSTM'")
-parser.add_argument("--hidden_dim", type=int, default=512,
-                    help="number of hidden units per layer, default 512")
-parser.add_argument("--num_layers", type=int, default=2,
-                    help="number of hidden layers, default 2")
-parser.add_argument("--history_w", type=int, default=32,
-                    help="history window size for predicting, default 32")
-parser.add_argument("--predict_w", type=int, default=1,
-                    help="predict window size, default 1")
-parser.add_argument("--stride", type=int, default=1,
-                    help="stride for sliding window, default 1")
-parser.add_argument("--dropout", type=float, default=0.2,
-                    help="dropout applied to layers, default 0.2")
-parser.add_argument("--batch_size", type=int, default=20, help="batch size, default 20")
-parser.add_argument("--epochs", type=int, default=50, help="epoch limit, default 50")
-parser.add_argument("--valid_prop", type=float, default=0.2, help="validation set prop, default 0.2")
-parser.add_argument("--test_prop", type=float, default=0.3,
-                    help="test set prop(only work for some dataset), default 0.3")
-parser.add_argument("--loss", type=str, default="MAE", help="loss function, default 'MAE'")
-parser.add_argument("--optim", type=str, default="adam", help="optimizer, default 'adam'")
-parser.add_argument("--lr", type=float, default=0.001, help="learning rate, default 1e-3")
-parser.add_argument("--weight_decay", type=float, default=1e-4, help="weight decay, default 1e-4")
-parser.add_argument("--clip", type=float, default=0.25, help="gradient clipping, default 0.25")
-parser.add_argument("--per_batch", type=int, default=10, help="log frequence per batch, default 10")
-parser.add_argument("--res", type=str, default="out", help="log files and result files dir")
-parser.add_argument("--one_file", type=str, default=None, help="only train on the specific data")
-parser.add_argument("--sigma", type=float, default=None, help="sigma for anomaly detecting threshold")
-parser.add_argument("--device", type=str, default="cuda", help="GPU device, if there is no gpu then use cpu")
-
-args = parser.parse_args()
-
 
 class Train:
 
     def __init__(self, config):
         self.config = config
         self.device = torch.device(self.config.device if torch.cuda.is_available() else "cpu")
-        self.model = self.get_model().to(self.device)
         self.dataset = self.get_data()
+        self.model = None
         self.dataset_g = iter(self.dataset)
         self.criterion = self.get_loss()
-        self.optimizer = self.get_optim(self.model)
+        self.optimizer = None
 
         self.timestamp = "{:.0f}".format(datetime.datetime.now().timestamp())
         self.logger = utils.get_logger(self.config, f"{self.config.res}/{self.timestamp}.log")
@@ -109,12 +64,12 @@ class Train:
         else:
             raise ValueError(f"not support --dataset arg: {self.config.dataset}")
 
-    def run_once(self, file=None):
+    def run_once(self, file=None, prepared_data=None, prefix="A1Benchmark"):
         if file is not None:
             if self.config.dataset != "Yahoo":
                 data_id, train, test, anomaly_vect = self.dataset.load_one(file)
             else:
-                data_id, train, test, anomaly_vect = self.dataset.load_one("A1Benchmark", file)
+                data_id, train, test, anomaly_vect = self.dataset.load_one(prefix, file)
         else:
             data_id, train, test, anomaly_vect = next(self.dataset_g)
 
@@ -125,9 +80,13 @@ class Train:
         if self.device.type == "cuda":
             self.logger.debug(utils.get_cuda_usage())
 
-        prepared_data = self.prepare_data(train, test, anomaly_vect)
+        if prepared_data is None:
+            prepared_data = self.prepare_data(train, test, anomaly_vect)
 
+        self.model = self.get_model().to(self.device)
         self.model.init_weight()
+        self.optimizer = self.get_optim(self.model)
+
         train_losses = []
         valid_losses = []
         best_valid_loss = None
@@ -178,7 +137,7 @@ class Train:
                 loss = self.criterion(out, y_batch).item()
                 res_y_.append(out.item())
                 res_y.append(y_batch.item())
-                is_pos = loss > threshold
+                is_pos = loss / y_batch.item() > threshold if self.config.relative else loss > threshold
                 is_true_pos = next(label_g).item() == 1
                 if is_pos and is_true_pos:
                     tp += 1
@@ -190,9 +149,9 @@ class Train:
                     tn += 1
 
         self.logger.info(f"tp: {tp}, tn: {tn}, fp: {fp}, fn: {fn}")
-        precision = tp / (tp + fp) if (tp + fp) != 0 else 0
-        recall = tp / (tp + fn) if (tp + fn) != 0 else 0
-        f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) != 0 else 0
+        precision = tp / (tp + fp) if (tp + fp) != 0 else -1
+        recall = tp / (tp + fn) if (tp + fn) != 0 else -1
+        f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else -1
         return np.array(res_y_), np.array(res_y), label.dataset, Measure(precision, recall, f1_score)
 
     def valid(self, valid_data):
@@ -229,7 +188,8 @@ class Train:
             out, hidden = self.model(x_batch, hidden)
             loss = self.criterion(out, y_batch)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.clip)
+            if self.config.clip is not None:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.clip)
             self.optimizer.step()
 
             total_loss += loss.item()
@@ -273,7 +233,7 @@ class Train:
     def __next__(self):
         return self.run_once()
 
-    def stats(self, name, loss_train, loss_valid, y_, y, label, measure):
+    def stats(self, name, loss_train, loss_valid, y_, y, label, measure, to_html=True):
         (indexes,) = np.where(label == 1)
         intervals = utils.get_intevals(indexes)
         fig = make_subplots(rows=2, cols=1, subplot_titles=["loss curve", "fit curve"])
@@ -298,23 +258,7 @@ class Train:
 
         fig.update_layout(title="precision: {:0<5.2f}, recall: {:0<5.2f}, F1 score: {:0<5.2f}".format(*measure))
 
-        fig.write_html(f"./{self.config.res}/{name}_{self.timestamp}.html")
-
-
-torch.manual_seed(args.seed)
-torch.cuda.manual_seed(args.seed)
-np.random.seed(args.seed)
-
-os.makedirs(args.res, exist_ok=True)
-main = Train(args)
-
-# noinspection PyBroadException
-try:
-    if main.config.one_file is not None:
-        res = main.run_once(main.config.one_file)
-        main.stats(*res)
-    else:
-        for res in main:
-            main.stats(*res)
-except Exception:
-    main.logger.error(traceback.format_exc())
+        if to_html:
+            fig.write_html(f"./{self.config.res}/{name}_{self.timestamp}.html")
+        else:
+            fig.show()

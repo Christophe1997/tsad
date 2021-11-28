@@ -121,9 +121,7 @@ class KPIDataset(CSVDataset):
         test_df = self.test_data.loc[self.test_data["KPI ID"] == kpi_id][["value", "label"]]
         data_id = f"kpi_{kpi_id}"
         train = train_df["value"].to_numpy()
-        train = self.normalized(train)
         test = test_df["value"].to_numpy()
-        test = self.normalized(test)
         anomaly_vect = np.hstack((train_df["label"].to_numpy(), test_df["label"].to_numpy()))
         return data_id, self.normalized(train), self.normalized(test), anomaly_vect
 

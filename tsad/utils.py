@@ -30,6 +30,8 @@ class CustomFormatter(logging.Formatter):
 
 def get_logger(args, fp):
     res = logging.getLogger("root")
+    for hadler in res.handlers[:]:
+        res.removeHandler(hadler)
     fp_handler = logging.FileHandler(fp, mode='a+', encoding='utf8')
     s_handler = logging.StreamHandler(stream=sys.stdout)
     formatter = CustomFormatter('detail', '[%(asctime)s] %(levelname)s [%(name)s] %(message)s%(detail)s')
@@ -76,7 +78,7 @@ def repackage_hidden(hidden):
 
 
 def get_intevals(indexes):
-    if len(indexes) < 2:
+    if len(indexes) < 1:
         return indexes
 
     res = []
