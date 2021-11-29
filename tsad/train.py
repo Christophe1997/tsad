@@ -4,6 +4,7 @@ from collections import namedtuple
 
 import numpy as np
 import plotly.graph_objects as go
+import sklearn.metrics as metrics
 import torch
 import torch.utils.data
 from plotly.subplots import make_subplots
@@ -15,7 +16,6 @@ from tsad.data import UCRTSAD2021Dataset, KPIDataset, YahooS5Dataset, TimeSeries
 from tsad.model import RNNModel
 
 PreparedData = namedtuple('PreparedData', field_names=["train", "valid", "test"])
-Measure = namedtuple('Measure', field_names=["precision", "recall", "f1_score"])
 
 
 class Train:
@@ -31,7 +31,6 @@ class Train:
 
         self.timestamp = "{:.0f}".format(datetime.datetime.now().timestamp())
         self.logger = utils.get_logger(self.config, f"{self.config.res}/{self.timestamp}.log")
-        self.sigma = None
 
     def get_model(self):
         if self.config.rnn_type in ["LSTM", "GRU"]:
@@ -51,6 +50,8 @@ class Train:
     def get_optim(self, model: nn.Module):
         if self.config.optim == "adam":
             return optim.Adam(model.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay)
+        elif self.config.optim == "adamW":
+            return optim.AdamW(model.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay)
         else:
             raise ValueError(f"not support --optim arg: {self.config.optim}")
 
@@ -100,33 +101,23 @@ class Train:
             train_losses.append(train_loss)
             valid_losses.append(valid_loss)
             if best_valid_loss is None or valid_loss < best_valid_loss:
-                with open(f"{self.config.res}/{self.config.output}", "wb") as f:
+                with open(f"{self.config.res}/{data_id}_{self.config.output}", "wb") as f:
                     torch.save(self.model, f)
                 best_valid_loss = valid_loss
 
-        self.logger.info(f"Save model with valid loss: {best_valid_loss}, sigma: {self.sigma}")
-        res_y_, res_y, label, m = self.eval(*prepared_data.test, threshold=self.config.sigma)
-        self.logger.info("Measure on test set: precision:"
-                         " {:0<5.2f}, recall: {:0<5.2f}, F1 score: {:0<5.2f}".format(*m))
+        self.logger.info(f"Save model with valid loss: {best_valid_loss}")
+        res_y_, res_y, label = self.eval(*prepared_data.test, data_id=data_id)
 
-        return data_id, train_losses, valid_losses, res_y_, res_y, label, m
+        return data_id, train_losses, valid_losses, res_y_, res_y, label
 
-    def eval(self, test_data, label, threshold=None):
-        with open(f"{self.config.res}/{self.config.output}", "rb") as f:
-            self.model = torch.load(f)
+    def eval(self, test_data, label, data_id=None):
+        with open(f"{self.config.res}/{data_id}_{self.config.output}", "rb") as f:
+            self.model = torch.load(f, map_location=self.device)
         self.model.rnn.flatten_parameters()
-
-        if threshold is None:
-            threshold = 3 * self.sigma
-        self.logger.info(f"eval on test set with threshold: {threshold}")
+        self.logger.info(f"Start eval on test set")
         self.model.eval()
         res_y = []
         res_y_ = []
-        tp = 0
-        fp = 0
-        tn = 0
-        fn = 0
-        label_g = iter(label)
         hidden = self.model.init_hidden(1)
         with torch.no_grad():
             for x_batch, y_batch in test_data:
@@ -134,25 +125,10 @@ class Train:
                 x_batch = x_batch.view(-1, 1, self.config.history_w).to(self.device)
                 y_batch = y_batch.to(self.device)
                 out, hidden = self.model(x_batch, hidden)
-                loss = self.criterion(out, y_batch).item()
                 res_y_.append(out.item())
                 res_y.append(y_batch.item())
-                is_pos = loss / y_batch.item() > threshold if self.config.relative else loss > threshold
-                is_true_pos = next(label_g).item() == 1
-                if is_pos and is_true_pos:
-                    tp += 1
-                elif is_pos:
-                    fp += 1
-                elif is_true_pos:
-                    fn += 1
-                else:
-                    tn += 1
 
-        self.logger.info(f"tp: {tp}, tn: {tn}, fp: {fp}, fn: {fn}")
-        precision = tp / (tp + fp) if (tp + fp) != 0 else -1
-        recall = tp / (tp + fn) if (tp + fn) != 0 else -1
-        f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else -1
-        return np.array(res_y_), np.array(res_y), label.dataset, Measure(precision, recall, f1_score)
+        return np.array(res_y_), np.array(res_y), label.dataset
 
     def valid(self, valid_data):
         self.model.eval()
@@ -168,8 +144,6 @@ class Train:
                 total_loss += self.criterion(out, y_batch).item()
 
         loss = total_loss / total_batches
-        if self.sigma is None or self.sigma > loss:
-            self.sigma = loss
 
         return loss
 
@@ -204,7 +178,6 @@ class Train:
 
     def prepare_data(self, train, test, anomaly_vect):
 
-        self.sigma = np.std(train)
         train_ts = TimeSeries(train, self.config.history_w,
                               pred_w=self.config.predict_w,
                               stride=self.config.stride, device=self.device)
@@ -233,32 +206,80 @@ class Train:
     def __next__(self):
         return self.run_once()
 
-    def stats(self, name, loss_train, loss_valid, y_, y, label, measure, to_html=True):
+    def stats(self, name, loss_train, loss_valid, y_, y, label, to_html=True, html_file=None):
         (indexes,) = np.where(label == 1)
         intervals = utils.get_intevals(indexes)
-        fig = make_subplots(rows=2, cols=1, subplot_titles=["loss curve", "fit curve"])
+        fig = make_subplots(rows=4, cols=2,
+                            specs=[[{"colspan": 2}, None],
+                                   [{"colspan": 2}, None],
+                                   [{"rowspan": 2}, {"rowspan": 2}],
+                                   [None, None]],
+                            subplot_titles=["loss curve", "fit curve", "ROC curve", "Precision-Recall curve"])
+
         fig.add_trace(go.Scatter(x=np.arange(len(loss_train)), y=loss_train, mode="lines", name="train loss"),
                       row=1, col=1)
         fig.add_trace(go.Scatter(x=np.arange(len(loss_valid)), y=loss_valid, mode="lines", name="valid loss"),
                       row=1, col=1)
+
         fig.add_trace(go.Scatter(x=np.arange(len(y_)), y=y_, mode="lines", name="prediction",
                                  line={"color": "red"}), row=2, col=1)
         fig.add_trace(go.Scatter(x=np.arange(len(y)), y=y, mode="lines", name="fact",
                                  line={"color": "green"}), row=2, col=1)
         min_y = np.min(y)
         max_y = np.max(y)
-        for x, y in intervals:
-            if x == y:
-                fig.add_shape(go.layout.Shape(type="line", xref='x', x0=x, y0=min_y, x1=x, y1=max_y,
+        for x0, x1 in intervals:
+            if x0 == x1:
+                fig.add_shape(go.layout.Shape(type="line", xref='x', x0=x0, y0=min_y, x1=x0, y1=max_y,
                                               line={"dash": "dash", "color": "LightSkyBlue"}), row=2, col=1)
             else:
-                fig.add_shape(go.layout.Shape(type="rect", xref='x', x0=x, y0=min_y, x1=y, y1=max_y,
+                fig.add_shape(go.layout.Shape(type="rect", xref='x', x0=x0, y0=min_y, x1=x1, y1=max_y,
                                               line={"color": "LightSkyBlue"}, fillcolor="LightSkyBlue", opacity=0.5),
                               row=2, col=1)
 
-        fig.update_layout(title="precision: {:0<5.2f}, recall: {:0<5.2f}, F1 score: {:0<5.2f}".format(*measure))
+        prob = np.abs(y_ - y)
+
+        fpr, tpr, _ = metrics.roc_curve(y_true=label, y_score=prob)
+        roc_auc = metrics.auc(fpr, tpr)
+        fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", fill="tozeroy", line={"color": "#FF8E04"},
+                                 showlegend=False), row=3, col=1)
+        fig.add_shape(go.layout.Shape(type="line", x0=0, y0=0, x1=1, y1=1, line={"dash": "dash", "color": "blue"}),
+                      row=3, col=1)
+        fig.add_annotation(
+            x=0.8,
+            y=0.2,
+            xref="x",
+            yref="y",
+            text=f"auc={roc_auc:.2f}",
+            showarrow=False,
+            align="center",
+            bgcolor="#BDBDBD",
+            opacity=0.8, row=3, col=1)
+
+        precision, recall, _ = metrics.precision_recall_curve(y_true=label, probas_pred=prob)
+        fig.add_trace(go.Scatter(x=recall, y=precision, mode="lines", fill="tozeroy", line={"color": "#FF8E04"},
+                                 showlegend=False), row=3, col=2)
+        fig.add_shape(go.layout.Shape(type="line", x0=0, y0=1, x1=1, y1=0, line={"dash": "dash", "color": "blue"}),
+                      row=3, col=2)
+
+        fig.update_xaxes(title_text="False Positive Rate", row=3, col=1, range=[0, 1])
+        fig.update_yaxes(title_text="True Positive Rate", row=3, col=1, range=[0, 1])
+        fig.update_xaxes(title_text="Recall", row=3, col=2, range=[0, 1])
+        fig.update_yaxes(title_text="Precision", row=3, col=2, range=[0, 1])
+
+        label_pred = prob > self.config.sigma if not self.config.relative else (prob / y) > self.config.sigma
+        label_pred.astype(int)
+        tn, fp, fn, tp = metrics.confusion_matrix(label, label_pred).ravel()
+        self.logger.info(f"tp: {tp}, fp: {fp}, tn: {tn}, fn: {fn}")
+        prec, reca, f_beta, _ = metrics.precision_recall_fscore_support(label, label_pred, beta=self.config.beta,
+                                                                        average="binary", zero_division=0)
+        title = f"precision: {prec}, recall: {reca}, F beta score(beta={self.config.beta}): {f_beta}"
+        self.logger.info(title)
+
+        fig.update_layout(title=title)
 
         if to_html:
-            fig.write_html(f"./{self.config.res}/{name}_{self.timestamp}.html")
+            fig.write_html(html_file if html_file is not None else f"./{self.config.res}/{name}_{self.timestamp}.html")
         else:
             fig.show()
+
+        return prec, reca, f_beta

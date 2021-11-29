@@ -40,13 +40,14 @@ parser.add_argument("--loss", type=str, default="MAE", help="loss function, defa
 parser.add_argument("--optim", type=str, default="adam", help="optimizer, default 'adam'")
 parser.add_argument("--lr", type=float, default=0.001, help="learning rate, default 1e-3")
 parser.add_argument("--weight_decay", type=float, default=1e-4, help="weight decay, default 1e-4")
-parser.add_argument("--clip", type=float, default=None, help="gradient clipping, default 0.25")
+parser.add_argument("--clip", type=float, default=None, help="gradient clipping, default None")
 parser.add_argument("--per_batch", type=int, default=10, help="log frequence per batch, default 10")
 parser.add_argument("--res", type=str, default="out", help="log files and result files dir")
 parser.add_argument("--one_file", type=str, default=None, help="only train on the specific data")
 parser.add_argument("--sigma", type=float, default=None, help="sigma for anomaly detecting threshold")
 parser.add_argument("--device", type=str, default="cuda", help="GPU device, if there is no gpu then use cpu")
 parser.add_argument("--relative", default=False, action="store_true", help="use a relative error")
+parser.add_argument("--beta", default=0.1, type=float, help="use for F beta score")
 
 args = parser.parse_args()
 
