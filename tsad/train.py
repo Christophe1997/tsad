@@ -13,7 +13,7 @@ from torch import optim
 
 from tsad import utils
 from tsad.data import UCRTSAD2021Dataset, KPIDataset, YahooS5Dataset, TimeSeries
-from tsad.model import RNNModel
+from tsad.model import AutoEncoder, RNNModel
 
 PreparedData = namedtuple('PreparedData', field_names=["train", "valid", "test"])
 
@@ -85,7 +85,7 @@ class Train:
             prepared_data = self.prepare_data(train, test, anomaly_vect)
 
         self.model = self.get_model().to(self.device)
-        self.model.init_weight()
+        # self.model.init_weight()
         self.optimizer = self.get_optim(self.model)
 
         train_losses = []
@@ -118,13 +118,11 @@ class Train:
         self.model.eval()
         res_y = []
         res_y_ = []
-        hidden = self.model.init_hidden(1)
         with torch.no_grad():
             for x_batch, y_batch in test_data:
-                hidden = utils.repackage_hidden(hidden)
-                x_batch = x_batch.view(-1, 1, self.config.history_w).to(self.device)
+                x_batch = x_batch.to(self.device)
                 y_batch = y_batch.to(self.device)
-                out, hidden = self.model(x_batch, hidden)
+                out = self.model(x_batch)
                 res_y_.append(out.item())
                 res_y.append(y_batch.item())
 
@@ -134,13 +132,11 @@ class Train:
         self.model.eval()
         total_loss = 0
         total_batches = len(valid_data)
-        hidden = self.model.init_hidden(self.config.batch_size)
         with torch.no_grad():
             for batch_idx, (x_batch, y_batch) in enumerate(valid_data):
-                hidden = utils.repackage_hidden(hidden)
-                x_batch = x_batch.view(-1, self.config.batch_size, self.config.history_w).to(self.device)
+                x_batch = x_batch.to(self.device)
                 y_batch = y_batch.to(self.device)
-                out, hidden = self.model(x_batch, hidden)
+                out = self.model(x_batch)
                 total_loss += self.criterion(out, y_batch).item()
 
         loss = total_loss / total_batches
@@ -152,14 +148,12 @@ class Train:
         self.model.train()
         total_loss = 0
         total_batches = len(train_data)
-        hidden = self.model.init_hidden(self.config.batch_size)
 
         for batch_idx, (x_batch, y_batch) in enumerate(train_data):
             self.model.zero_grad()
-            hidden = utils.repackage_hidden(hidden)
-            x_batch = x_batch.view(-1, self.config.batch_size, self.config.history_w).to(self.device)
+            x_batch = x_batch.to(self.device)
             y_batch = y_batch.to(self.device)
-            out, hidden = self.model(x_batch, hidden)
+            out = self.model(x_batch)
             loss = self.criterion(out, y_batch)
             loss.backward()
             if self.config.clip is not None:
@@ -188,7 +182,7 @@ class Train:
         test_set = TimeSeries(test, self.config.history_w,
                               pred_w=self.config.predict_w,
                               stride=self.config.stride, device=self.device)
-        anomaly_vect = anomaly_vect[len(train) + self.config.history_w:]
+        anomaly_vect = anomaly_vect[len(train) + self.config.history_w + self.config.predict_w - 1:]
         assert len(test_set) == len(anomaly_vect), f"{len(test_set)} != {len(anomaly_vect)}"
 
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.config.batch_size,
@@ -272,7 +266,7 @@ class Train:
         self.logger.info(f"tp: {tp}, fp: {fp}, tn: {tn}, fn: {fn}")
         prec, reca, f_beta, _ = metrics.precision_recall_fscore_support(label, label_pred, beta=self.config.beta,
                                                                         average="binary", zero_division=0)
-        title = f"precision: {prec}, recall: {reca}, F beta score(beta={self.config.beta}): {f_beta}"
+        title = f"precision: {prec:.2f}, recall: {reca:.2f}, F beta score(beta={self.config.beta}): {f_beta:.2f}"
         self.logger.info(title)
 
         fig.update_layout(title=title)
