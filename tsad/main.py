@@ -6,7 +6,7 @@ import traceback
 import numpy as np
 import torch
 
-from tsad.train import Train
+from tsad.train import Train, EncoderTrain
 
 parser = argparse.ArgumentParser("Train Script")
 parser.add_argument("--data", type=str, default="./data/UCR_TimeSeriesAnomalyDatasets2021/UCR_Anomaly_FullData",
@@ -48,6 +48,8 @@ parser.add_argument("--sigma", type=float, default=None, help="sigma for anomaly
 parser.add_argument("--device", type=str, default="cuda", help="GPU device, if there is no gpu then use cpu")
 parser.add_argument("--relative", default=False, action="store_true", help="use a relative error")
 parser.add_argument("--beta", default=0.1, type=float, help="use for F beta score")
+parser.add_argument("--emb_dim", default=64, type=int, help="embedding dimension for autoencoder")
+parser.add_argument("--model_type", type=str, default="autoencoder", help="model type")
 
 args = parser.parse_args()
 
@@ -56,15 +58,17 @@ torch.cuda.manual_seed(args.seed)
 np.random.seed(args.seed)
 
 os.makedirs(args.res, exist_ok=True)
-main = Train(args)
+if args.model_type == "autoencoder":
+    main = EncoderTrain(args)
+else:
+    main = Train(args)
 
 # noinspection PyBroadException
 try:
     if main.config.one_file is not None:
         res = main.run_once(main.config.one_file)
-        main.stats(*res)
     else:
         for res in main:
-            main.stats(*res)
+            pass
 except Exception:
     main.logger.error(traceback.format_exc())

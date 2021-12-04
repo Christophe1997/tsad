@@ -3,11 +3,9 @@ import time
 from collections import namedtuple
 
 import numpy as np
-import plotly.graph_objects as go
-import sklearn.metrics as metrics
+
 import torch
 import torch.utils.data
-from plotly.subplots import make_subplots
 from torch import nn
 from torch import optim
 
@@ -41,9 +39,9 @@ class Train:
 
     def get_loss(self):
         if self.config.loss == "MAE":
-            return nn.L1Loss()
+            return nn.L1Loss(reduction="sum").to(self.device)
         elif self.config.loss == "MSE":
-            return nn.MSELoss()
+            return nn.MSELoss().to(self.device)
         else:
             raise ValueError(f"not support --loss arg: {self.config.loss}")
 
@@ -106,9 +104,8 @@ class Train:
                 best_valid_loss = valid_loss
 
         self.logger.info(f"Save model with valid loss: {best_valid_loss}")
-        res_y_, res_y, label = self.eval(*prepared_data.test, data_id=data_id)
-
-        return data_id, train_losses, valid_losses, res_y_, res_y, label
+        eval_loss = self.eval(*prepared_data.test, data_id=data_id)
+        self.logger.info(f"eval loss on test set: {eval_loss}")
 
     def eval(self, test_data, label, data_id=None):
         with open(f"{self.config.res}/{data_id}_{self.config.output}", "rb") as f:
@@ -134,13 +131,18 @@ class Train:
         total_batches = len(valid_data)
         with torch.no_grad():
             for batch_idx, (x_batch, y_batch) in enumerate(valid_data):
-                x_batch = x_batch.to(self.device)
-                y_batch = y_batch.to(self.device)
-                out = self.model(x_batch)
-                total_loss += self.criterion(out, y_batch).item()
+                loss = self.compute_loss(x_batch, y_batch)
+                total_loss += loss.item()
 
         loss = total_loss / total_batches
 
+        return loss
+
+    def compute_loss(self, x_batch, y_batch):
+        x_batch = x_batch.to(self.device)
+        y_batch = y_batch.to(self.device)
+        out = self.model(x_batch)
+        loss = self.criterion(out, y_batch)
         return loss
 
     def train(self, train_data, epoch):
@@ -151,10 +153,7 @@ class Train:
 
         for batch_idx, (x_batch, y_batch) in enumerate(train_data):
             self.model.zero_grad()
-            x_batch = x_batch.to(self.device)
-            y_batch = y_batch.to(self.device)
-            out = self.model(x_batch)
-            loss = self.criterion(out, y_batch)
+            loss = self.compute_loss(x_batch, y_batch)
             loss.backward()
             if self.config.clip is not None:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.clip)
@@ -170,7 +169,7 @@ class Train:
 
         return train_loss
 
-    def prepare_data(self, train, test, anomaly_vect):
+    def prepare_data(self, train, test, anomaly_vect, test_batch_size=1):
 
         train_ts = TimeSeries(train, self.config.history_w,
                               pred_w=self.config.predict_w,
@@ -182,15 +181,16 @@ class Train:
         test_set = TimeSeries(test, self.config.history_w,
                               pred_w=self.config.predict_w,
                               stride=self.config.stride, device=self.device)
-        anomaly_vect = anomaly_vect[len(train) + self.config.history_w + self.config.predict_w - 1:]
-        assert len(test_set) == len(anomaly_vect), f"{len(test_set)} != {len(anomaly_vect)}"
+        anomaly_vect = anomaly_vect[len(train):]
 
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=self.config.batch_size,
                                                    drop_last=True, shuffle=False)
         valid_loader = torch.utils.data.DataLoader(valid_set, batch_size=self.config.batch_size, drop_last=True)
 
-        test_loader = torch.utils.data.DataLoader(test_set, batch_size=1)
-        anomaly_vect_loader = torch.utils.data.DataLoader(anomaly_vect, batch_size=1)
+        if test_batch_size is None:
+            test_batch_size = len(test_set)
+        test_loader = torch.utils.data.DataLoader(test_set, batch_size=test_batch_size)
+        anomaly_vect_loader = torch.utils.data.DataLoader(anomaly_vect, batch_size=test_batch_size)
         return PreparedData(train=train_loader, valid=valid_loader, test=(test_loader, anomaly_vect_loader))
 
     def __iter__(self):
@@ -200,80 +200,32 @@ class Train:
     def __next__(self):
         return self.run_once()
 
-    def stats(self, name, loss_train, loss_valid, y_, y, label, to_html=True, html_file=None):
-        (indexes,) = np.where(label == 1)
-        intervals = utils.get_intevals(indexes)
-        fig = make_subplots(rows=4, cols=2,
-                            specs=[[{"colspan": 2}, None],
-                                   [{"colspan": 2}, None],
-                                   [{"rowspan": 2}, {"rowspan": 2}],
-                                   [None, None]],
-                            subplot_titles=["loss curve", "fit curve", "ROC curve", "Precision-Recall curve"])
 
-        fig.add_trace(go.Scatter(x=np.arange(len(loss_train)), y=loss_train, mode="lines", name="train loss"),
-                      row=1, col=1)
-        fig.add_trace(go.Scatter(x=np.arange(len(loss_valid)), y=loss_valid, mode="lines", name="valid loss"),
-                      row=1, col=1)
+class EncoderTrain(Train):
 
-        fig.add_trace(go.Scatter(x=np.arange(len(y_)), y=y_, mode="lines", name="prediction",
-                                 line={"color": "red"}), row=2, col=1)
-        fig.add_trace(go.Scatter(x=np.arange(len(y)), y=y, mode="lines", name="fact",
-                                 line={"color": "green"}), row=2, col=1)
-        min_y = np.min(y)
-        max_y = np.max(y)
-        for x0, x1 in intervals:
-            if x0 == x1:
-                fig.add_shape(go.layout.Shape(type="line", xref='x', x0=x0, y0=min_y, x1=x0, y1=max_y,
-                                              line={"dash": "dash", "color": "LightSkyBlue"}), row=2, col=1)
-            else:
-                fig.add_shape(go.layout.Shape(type="rect", xref='x', x0=x0, y0=min_y, x1=x1, y1=max_y,
-                                              line={"color": "LightSkyBlue"}, fillcolor="LightSkyBlue", opacity=0.5),
-                              row=2, col=1)
+    def __init__(self, config):
+        super(EncoderTrain, self).__init__(config)
+        self.config.predict_w = 0
 
-        prob = np.abs(y_ - y)
+    def get_model(self):
+        return AutoEncoder(self.config.history_w, self.config.emb_dim, self.config.hidden_dim, self.config.rnn_type)
 
-        fpr, tpr, _ = metrics.roc_curve(y_true=label, y_score=prob)
-        roc_auc = metrics.auc(fpr, tpr)
-        fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", fill="tozeroy", line={"color": "#FF8E04"},
-                                 showlegend=False), row=3, col=1)
-        fig.add_shape(go.layout.Shape(type="line", x0=0, y0=0, x1=1, y1=1, line={"dash": "dash", "color": "blue"}),
-                      row=3, col=1)
-        fig.add_annotation(
-            x=0.8,
-            y=0.2,
-            xref="x",
-            yref="y",
-            text=f"auc={roc_auc:.2f}",
-            showarrow=False,
-            align="center",
-            bgcolor="#BDBDBD",
-            opacity=0.8, row=3, col=1)
+    def compute_loss(self, x_batch, y_batch):
+        out = self.model(x_batch)
+        return self.criterion(out, x_batch)
 
-        precision, recall, _ = metrics.precision_recall_curve(y_true=label, probas_pred=prob)
-        fig.add_trace(go.Scatter(x=recall, y=precision, mode="lines", fill="tozeroy", line={"color": "#FF8E04"},
-                                 showlegend=False), row=3, col=2)
-        fig.add_shape(go.layout.Shape(type="line", x0=0, y0=1, x1=1, y1=0, line={"dash": "dash", "color": "blue"}),
-                      row=3, col=2)
+    def eval(self, test_data, label, data_id=None):
+        with open(f"{self.config.res}/{data_id}_{self.config.output}", "rb") as f:
+            self.model = torch.load(f, map_location=self.device)
+        self.logger.info(f"Start eval on test set")
+        self.model.eval()
+        total_loss = []
+        with torch.no_grad():
+            for x_batch, y_batch in test_data:
+                loss = self.compute_loss(x_batch, y_batch)
+                total_loss.append(loss.item())
 
-        fig.update_xaxes(title_text="False Positive Rate", row=3, col=1, range=[0, 1])
-        fig.update_yaxes(title_text="True Positive Rate", row=3, col=1, range=[0, 1])
-        fig.update_xaxes(title_text="Recall", row=3, col=2, range=[0, 1])
-        fig.update_yaxes(title_text="Precision", row=3, col=2, range=[0, 1])
+        return np.mean(total_loss)
 
-        label_pred = prob > self.config.sigma if not self.config.relative else (prob / y) > self.config.sigma
-        label_pred.astype(int)
-        tn, fp, fn, tp = metrics.confusion_matrix(label, label_pred).ravel()
-        self.logger.info(f"tp: {tp}, fp: {fp}, tn: {tn}, fn: {fn}")
-        prec, reca, f_beta, _ = metrics.precision_recall_fscore_support(label, label_pred, beta=self.config.beta,
-                                                                        average="binary", zero_division=0)
-        title = f"precision: {prec:.2f}, recall: {reca:.2f}, F beta score(beta={self.config.beta}): {f_beta:.2f}"
-        self.logger.info(title)
-
-        fig.update_layout(title=title)
-
-        if to_html:
-            fig.write_html(html_file if html_file is not None else f"./{self.config.res}/{name}_{self.timestamp}.html")
-        else:
-            fig.show()
-
-        return prec, reca, f_beta
+    def prepare_data(self, train, test, anomaly_vect, test_batch_size=None):
+        return super(EncoderTrain, self).prepare_data(train, test, anomaly_vect, test_batch_size)

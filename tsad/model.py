@@ -24,7 +24,7 @@ class RNNModel(nn.Module):
 
         out, hidden = self.rnn(x)
         hidden = hidden[0]
-        hidden = hidden[-1, :].view(-1, self.hidden_dim)
+        hidden = hidden.view(-1, self.hidden_dim)
         hidden = self.dropout(hidden)
         out = self.fc(hidden)
         return out
@@ -52,40 +52,46 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.rnn1 = getattr(nn, rnn_type)(n_features, hidden_dim, batch_first=True)
         self.rnn2 = getattr(nn, rnn_type)(hidden_dim, emb_dim, batch_first=True)
+        self.active1 = nn.ReLU()
+        self.active2 = nn.Tanh()
 
     def forward(self, x):
         x = x.unsqueeze(-1)
         out, _ = self.rnn1(x)
+        out = self.active1(out)
         out, hidden = self.rnn2(out)
 
-        return hidden[0]
+        return self.active2(hidden[0])
 
 
 class Decoder(nn.Module):
     def __init__(self, seq_len, emb_dim, hidden_dim, rnn_type="GRU", n_features=1):
         super(Decoder, self).__init__()
         self.seq_len = seq_len
-        self.rnn1 = getattr(nn, rnn_type)(emb_dim, emb_dim)
-        self.rnn2 = getattr(nn, rnn_type)(emb_dim, hidden_dim)
+        self.rnn1 = getattr(nn, rnn_type)(emb_dim, emb_dim, batch_first=True)
+        self.rnn2 = getattr(nn, rnn_type)(emb_dim, hidden_dim, batch_first=True)
         self.linear = nn.Linear(hidden_dim, n_features)
+        self.active1 = nn.ReLU()
 
     def forward(self, x):
         x = x.repeat(self.seq_len, 1, 1)
         x = x.transpose(0, 1)
         out, _ = self.rnn1(x)
+        out = self.active1(out)
         out, _ = self.rnn2(out)
         out = self.linear(out)
-        out = out.squeeze()
+        out = out.squeeze(-1)
+
         return out
 
 
 class AutoEncoder(nn.Module):
-    def __init__(self, out_w, hidden_dim, rnn_type="GRU"):
+    def __init__(self, window_size, emb_dim, hidden_dim, rnn_type="GRU"):
         super(AutoEncoder, self).__init__()
-        self.encoder = Encoder(out_w, hidden_dim, rnn_type)
-        self.decoder = Decoder(out_w, hidden_dim, rnn_type)
+        self.encoder = Encoder(emb_dim, hidden_dim, rnn_type)
+        self.decoder = Decoder(window_size, emb_dim, hidden_dim, rnn_type)
 
     def forward(self, x):
         out = self.encoder(x)
-        out = self.decoder(*out)
+        out = self.decoder(out)
         return out
