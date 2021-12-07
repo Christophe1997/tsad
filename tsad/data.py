@@ -5,27 +5,27 @@ import os
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 
 from tsad import utils
 
 
-class TimeSeries(Dataset):
+class SlidingWindowDataset(Dataset):
 
-    def __init__(self, data: np.ndarray, history_w, pred_w=1, stride=1, transform=None, device=None):
-        super(TimeSeries, self).__init__()
+    def __init__(self, data: np.ndarray, history_w, pred_w=1, overlap=False, device=torch.device("cpu")):
+        super(SlidingWindowDataset, self).__init__()
         self.history_w = history_w
         self.pred_w = pred_w
         data = np.squeeze(data)
-        if len(data.shape) != 1:
-            raise ValueError("Only support 1D data")
 
-        data = utils.scan1d(data, history_w + pred_w, stride=stride)
-        self.x, self.y = np.hsplit(data, [self.history_w])
+        data = utils.scan(data, history_w + pred_w)
+        if overlap:
+            self.x, self.y = data[:-pred_w], data[pred_w:]
+        else:
+            self.x, self.y = np.hsplit(data, [self.history_w])
+
         self.x = torch.tensor(self.x).float().to(device)
         self.y = torch.tensor(self.y).float().to(device)
-
-        self.transform = transform
 
     def __getitem__(self, index):
         return self.x[index], self.y[index]
@@ -46,12 +46,6 @@ class CSVDataset(abc.ABC):
     @abc.abstractmethod
     def __iter__(self):
         pass
-
-    @staticmethod
-    def normalized(data):
-        # return (data - data.mean(axis=0)) / data.std(axis=0)
-        data_std = (data - data.min(axis=0)) / (data.max(axis=0) - data.min(axis=0))
-        return data_std * 2 - 1
 
 
 class UCRTSAD2021Dataset(CSVDataset):
@@ -75,7 +69,7 @@ class UCRTSAD2021Dataset(CSVDataset):
         indices = [train_end, len(data)]
         train, test, _ = np.split(data, indices)
 
-        return data_id, self.normalized(train), self.normalized(test), anomaly_vect
+        return data_id, utils.normalized(train), utils.normalized(test), anomaly_vect
 
     def __iter__(self):
         for file in self.files:
@@ -103,7 +97,7 @@ class YahooS5Dataset(CSVDataset):
         indices = [math.floor(len(data) * self.train_prop), len(data)]
         train, test, _ = np.split(data, indices)
 
-        return data_id, self.normalized(train), self.normalized(test), anomaly_vect
+        return data_id, utils.normalized(train), utils.normalized(test), anomaly_vect
 
     def __iter__(self):
         for prefix, file in self.files:
@@ -123,8 +117,49 @@ class KPIDataset(CSVDataset):
         train = train_df["value"].to_numpy()
         test = test_df["value"].to_numpy()
         anomaly_vect = np.hstack((train_df["label"].to_numpy(), test_df["label"].to_numpy()))
-        return data_id, self.normalized(train), self.normalized(test), anomaly_vect
+        return data_id, utils.normalized(train), utils.normalized(test), anomaly_vect
 
     def __iter__(self):
         for kpi_id in self.train_data["KPI ID"].unique():
             yield self.load_one(kpi_id)
+
+
+class PreparedData:
+
+    def __init__(self, train: np.ndarray, test: np.ndarray, anomaly_vect: np.ndarray, valid_prop=0.3):
+        train = train.squeeze()
+        size = train.shape[0]
+        train_size = math.floor(size * (1 - valid_prop))
+        self.train = train[:train_size]
+        self.valid = train[train_size + 1:]
+        self.test = test.squeeze()
+        anomaly_vect = anomaly_vect.squeeze()
+
+        self.train_size = train_size
+        self.valid_size = size - train_size
+        self.test_size = self.test.shape[0]
+
+        assert anomaly_vect.shape[0] == self.train_size + self.valid_size + self.test_size, "anomaly size not match"
+
+        self.train_anomaly = anomaly_vect[:train_size]
+        self.valid_anomaly = anomaly_vect[train_size + 1: size]
+        self.test_anomaly = anomaly_vect[-self.test_size:]
+
+    def batchify(self, history_w, pred_w, batch_size,
+                 overlap=False,
+                 shuffle=True,
+                 test_batch_size=None,
+                 device=torch.device("cpu")):
+        if test_batch_size is None:
+            test_batch_size = batch_size
+
+        train_loader = DataLoader(SlidingWindowDataset(self.train, history_w, pred_w, overlap, device=device),
+                                  batch_size=batch_size, shuffle=shuffle)
+
+        valid_loader = DataLoader(SlidingWindowDataset(self.valid, history_w, pred_w, overlap, device=device),
+                                  batch_size=batch_size, shuffle=False)
+
+        test_loader = DataLoader(SlidingWindowDataset(self.test, history_w, pred_w, overlap, device=device),
+                                 batch_size=test_batch_size, shuffle=False)
+
+        return train_loader, valid_loader, test_loader

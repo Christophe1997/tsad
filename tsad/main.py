@@ -6,7 +6,7 @@ import traceback
 import numpy as np
 import torch
 
-from tsad.train import Train, EncoderTrain
+from tsad.trainer import Trainer
 
 parser = argparse.ArgumentParser("Train Script")
 parser.add_argument("--data", type=str, default="./data/UCR_TimeSeriesAnomalyDatasets2021/UCR_Anomaly_FullData",
@@ -27,8 +27,6 @@ parser.add_argument("--history_w", type=int, default=32,
                     help="history window size for predicting, default 32")
 parser.add_argument("--predict_w", type=int, default=1,
                     help="predict window size, default 1")
-parser.add_argument("--stride", type=int, default=1,
-                    help="stride for sliding window, default 1")
 parser.add_argument("--dropout", type=float, default=0.2,
                     help="dropout applied to layers, default 0.2")
 parser.add_argument("--batch_size", type=int, default=20, help="batch size, default 20")
@@ -36,12 +34,6 @@ parser.add_argument("--epochs", type=int, default=50, help="epoch limit, default
 parser.add_argument("--valid_prop", type=float, default=0.2, help="validation set prop, default 0.2")
 parser.add_argument("--test_prop", type=float, default=0.3,
                     help="test set prop(only work for some dataset), default 0.3")
-parser.add_argument("--loss", type=str, default="MAE", help="loss function, default 'MAE'")
-parser.add_argument("--optim", type=str, default="adam", help="optimizer, default 'adam'")
-parser.add_argument("--lr", type=float, default=0.001, help="learning rate, default 1e-3")
-parser.add_argument("--weight_decay", type=float, default=1e-4, help="weight decay, default 1e-4")
-parser.add_argument("--clip", type=float, default=None, help="gradient clipping, default None")
-parser.add_argument("--per_batch", type=int, default=10, help="log frequence per batch, default 10")
 parser.add_argument("--res", type=str, default="out", help="log files and result files dir")
 parser.add_argument("--one_file", type=str, default=None, help="only train on the specific data")
 parser.add_argument("--sigma", type=float, default=None, help="sigma for anomaly detecting threshold")
@@ -58,17 +50,3 @@ torch.cuda.manual_seed(args.seed)
 np.random.seed(args.seed)
 
 os.makedirs(args.res, exist_ok=True)
-if args.model_type == "autoencoder":
-    main = EncoderTrain(args)
-else:
-    main = Train(args)
-
-# noinspection PyBroadException
-try:
-    if main.config.one_file is not None:
-        res = main.run_once(main.config.one_file)
-    else:
-        for res in main:
-            pass
-except Exception:
-    main.logger.error(traceback.format_exc())

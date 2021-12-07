@@ -3,21 +3,28 @@ import os
 import sys
 
 import numpy as np
-import torch
-
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import sklearn.metrics as metrics
+import torch
+from plotly.subplots import make_subplots
 
 
-def scan1d(arr: np.ndarray, window_size, stride=1):
-    size = len(arr)
+def scan(arr: np.ndarray, window_size, stride=1):
+    size = arr.shape[0]
     if window_size > size:
         raise ValueError("window size must smaller than arr length")
+    elif len(arr.shape) > 2:
+        raise ValueError("Only support 1d, 2d arr")
 
-    shape = (size - window_size) // stride + 1, window_size
+    is_1d = len(arr.shape) == 1
+    if is_1d:
+        arr = arr[:, np.newaxis]
+
     elem_size = arr.strides[-1]
-    return np.lib.stride_tricks.as_strided(arr, shape, strides=(elem_size * stride, elem_size), writeable=False)
+    shape = (size - window_size) // stride + 1, window_size, arr.shape[-1]
+    strides = shape[-1] * stride * elem_size, shape[-1] * elem_size, elem_size
+    res = np.lib.stride_tricks.as_strided(arr, shape, strides=strides, writeable=False)
+    return res.squeeze(-1) if is_1d else res
 
 
 def reconstruct(arr: np.ndarray, stride=1):
@@ -186,3 +193,12 @@ def stats(loss_train, loss_valid, y_, y, label, sigma=2, beta=0.1, to_html=True,
         fig.show()
 
     return prec, reca, f_beta
+
+
+def normalized(data, inf=-1, sup=1):
+    data_std = (data - data.min(axis=0)) / (data.max(axis=0) - data.min(axis=0))
+    return data_std * (sup - inf) + inf
+
+
+def standardize(data):
+    return (data - data.mean(axis=0)) / data.std(axis=0)

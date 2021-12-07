@@ -1,3 +1,6 @@
+import math
+
+import torch
 from torch import nn
 
 
@@ -40,7 +43,7 @@ class RNNModel(nn.Module):
     def init_weight(self):
         for name, param in self.rnn.named_parameters():
             if "bias" in name:
-                nn.init.constant_(param, 0)
+                nn.init.zeros_(param)
             elif "weight" in name:
                 nn.init.orthogonal_(param)
 
@@ -95,3 +98,82 @@ class AutoEncoder(nn.Module):
         out = self.encoder(x)
         out = self.decoder(out)
         return out
+
+
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000, batch_first=True):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        self.batch_first = batch_first
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+            x: Tensor, shape [seq_len, batch_size, embedding_dim]
+        """
+        if self.batch_first:
+            x = x.transpose(0, 1)
+
+        x = x + self.pe[:x.size(0)]
+        res = self.dropout(x)
+
+        return res if not self.batch_first else res.transpose(0, 1)
+
+
+class LinearDTransformer(nn.Module):
+
+    def __init__(self, d_model, history_w, predict_w, encoder=None,
+                 n_features=1,
+                 nhead=8,
+                 nlayers=6,
+                 dim_feedforward=1024,
+                 dropout=0.1,
+                 batch_first=True):
+        super(LinearDTransformer, self).__init__()
+        self.batch_first = batch_first
+
+        self.pos_encoder = PositionalEncoding(d_model, dropout, batch_first=batch_first)
+        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=batch_first)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
+
+        if encoder is not None:
+            self.encoder = encoder
+            self.encoder.requires_grad_(False)
+        else:
+            self.encoder = nn.Linear(n_features, d_model)
+
+        self.decoder = nn.Linear(d_model, n_features)
+        self.fc = nn.Linear(history_w, predict_w)
+
+        self.init_weight()
+
+    def init_weight(self):
+        initrange = 0.1
+        self.decoder.bias.data.zero_()
+        self.decoder.weight.data.uniform_(-initrange, initrange)
+        self.fc.bias.data.zero_()
+        self.fc.weight.data.uniform_(-initrange, initrange)
+
+    def forward(self, src, src_mask=None):
+        src = self.pos_encoder(src)
+        out = self.transformer_encoder(src, src_mask)
+        out = self.decoder(out)
+
+        if self.batch_first:
+            # [B, L, N] -> [B, N, L]
+            out = out.permute(0, 2, 1)
+        else:
+            # [L, B, N] -> [B, N, L]
+            out = out.permute(1, 2, 0)
+
+        out = self.fc(out)
+        # [B, N, L] -> [B, L, N]
+        out = out.permute(0, 2, 1)
+        return out.squeeze(-1)
