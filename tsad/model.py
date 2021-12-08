@@ -174,11 +174,8 @@ class LinearDTransformer(nn.Module):
             self.fc.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, src, src_mask=None):
-        # [B, L] -> [B, emb_dim]
-        src = self.encoder(src)
-        if len(src.shape) < 3:
-            src = src.repeat(self.seq_len, 1, 1)
-            src = src.transpose(0, 1)
+
+        src, _ = self.encoder(src, with_out=True)
 
         src = self.pos_encoder(src)
         out = self.transformer_encoder(src, src_mask)
