@@ -17,7 +17,7 @@ class Trainer:
 
         self.train_loader, self.valid_loader, self.test_loader = None, None, None
 
-    def train(self, history_w, pred_w,
+    def train(self, history_w, predict_w,
               epochs=100,
               batch_size=32,
               overlap=False,
@@ -25,7 +25,7 @@ class Trainer:
               test_batch_size=None, save_path=None):
 
         self.train_loader, self.valid_loader, self.test_loader = self.prepared_data.batchify(
-            history_w, pred_w, batch_size, overlap, shuffle, test_batch_size, self.device)
+            history_w, predict_w, batch_size, overlap, shuffle, test_batch_size, self.device)
 
         train_losses = []
         valid_losses = []

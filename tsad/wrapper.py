@@ -1,4 +1,5 @@
 import abc
+import logging
 
 import torch
 from torch import nn, optim
@@ -14,6 +15,14 @@ class ModelWrapper(abc.ABC):
         self.weight_decay = weight_decay
         self.optimizer = self.get_optimizer()
         self.criterion = self.get_criterion()
+        self.logger = logging.getLogger("root")
+
+    @classmethod
+    def from_static(cls, path, device=torch.device("cpu"), lr=1e-3, weight_decay=0.01):
+        with open(path, "rb") as f:
+            model = torch.load(f)
+
+        return cls(model, device, lr, weight_decay)
 
     def get_optimizer(self):
         return optim.AdamW(self.model.parameters(), self.lr, weight_decay=self.weight_decay)
@@ -26,13 +35,15 @@ class ModelWrapper(abc.ABC):
         total_loss = 0
         total_batches = len(dataloader)
 
-        for x_batch, y_batch in dataloader:
+        for batch_idx, (x_batch, y_batch) in enumerate(dataloader):
             self.optimizer.zero_grad()
             loss = self.criterion(self.model(x_batch), y_batch)
             loss.backward()
             self.train_extra()
             self.optimizer.step()
             total_loss += loss.item()
+            self.logger.debug("{:05d}/{:05d} batches, loss {:0<6.3f}".format(
+                batch_idx + 1, total_batches, loss.item()))
 
         return total_loss / total_batches
 
@@ -44,9 +55,11 @@ class ModelWrapper(abc.ABC):
         total_loss = 0
         total_batches = len(dataloader)
         with torch.no_grad():
-            for x_batch, y_batch in dataloader:
+            for batch_idx, (x_batch, y_batch) in enumerate(dataloader):
                 loss = self.criterion(self.model(x_batch), y_batch)
                 total_loss += loss.item()
+                self.logger.debug("{:05d}/{:05d} batches, loss {:0<6.3f}".format(
+                    batch_idx + 1, total_batches, loss.item()))
 
         return total_loss / total_batches
 

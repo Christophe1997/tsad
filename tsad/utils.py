@@ -18,7 +18,7 @@ def scan(arr: np.ndarray, window_size, stride=1):
 
     is_1d = len(arr.shape) == 1
     if is_1d:
-        arr = arr[:, np.newaxis]
+        arr = arr.reshape((arr.shape[0], 1))
 
     elem_size = arr.strides[-1]
     shape = (size - window_size) // stride + 1, window_size, arr.shape[-1]
@@ -202,3 +202,39 @@ def normalized(data, inf=-1, sup=1):
 
 def standardize(data):
     return (data - data.mean(axis=0)) / data.std(axis=0)
+
+
+def roc_curve(y_true, y_score):
+    fpr, tpr, thresholds = metrics.roc_curve(y_true=y_true, y_score=y_score)
+    roc_auc = metrics.auc(fpr, tpr)
+
+    fig = go.Figure(go.Scatter(x=fpr, y=tpr, mode="lines", fill="tozeroy", line={"color": "#FF8E04"}))
+    fig.add_shape(go.layout.Shape(type="line", x0=0, y0=0, x1=1, y1=1, line={"dash": "dash", "color": "blue"}))
+
+    fig.add_annotation(
+        x=1,
+        y=0,
+        xref="paper",
+        yref="paper",
+        text=f"auc={roc_auc:.2f}",
+        showarrow=False,
+        align="right",
+        bgcolor="#BDBDBD",
+        opacity=0.8)
+
+    fig.update_layout(width=500, height=500,
+                      xaxis_title="False Positive Rate",
+                      yaxis_title="True Positive Rate",
+                      title=f"ROC curve")
+    fig.show()
+
+
+def precision_recall_curve(y_true, y_score):
+    precision, recall, thresholds = metrics.precision_recall_curve(y_true=y_true, probas_pred=y_score)
+    fig = go.Figure(go.Scatter(x=recall, y=precision, mode="lines", fill="tozeroy", line={"color": "#FF8E04"}))
+    fig.add_shape(go.layout.Shape(type="line", x0=0, y0=1, x1=1, y1=0, line={"dash": "dash", "color": "blue"}))
+    fig.update_layout(width=500, height=500,
+                      xaxis_title="Recall",
+                      yaxis_title="Precision",
+                      title=f"Precision-Recall curve")
+    fig.show()

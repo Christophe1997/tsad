@@ -1,4 +1,5 @@
 import abc
+import logging
 import math
 import os
 
@@ -18,10 +19,15 @@ class SlidingWindowDataset(Dataset):
         self.pred_w = pred_w
         data = np.squeeze(data)
 
-        data = utils.scan(data, history_w + pred_w)
         if overlap:
-            self.x, self.y = data[:-pred_w], data[pred_w:]
+            data = utils.scan(data, history_w)
+            if pred_w == 0:
+                self.x = data
+                self.y = data
+            else:
+                self.x, self.y = data[:-pred_w], data[pred_w:]
         else:
+            data = utils.scan(data, history_w + pred_w)
             self.x, self.y = np.hsplit(data, [self.history_w])
 
         self.x = torch.tensor(self.x).float().to(device)
@@ -83,7 +89,7 @@ class YahooS5Dataset(CSVDataset):
                       for file in os.listdir(os.path.join(self.root_dir, prefix))]
         self.train_prop = 1 - test_prop
 
-    def load_one(self, prefix, file):
+    def load_one(self, file, prefix="A1Benchmark"):
         full_path = os.path.join(self.root_dir, prefix, file)
         try:
             data = pd.read_csv(full_path, usecols=["value", "anomaly"])
@@ -126,7 +132,8 @@ class KPIDataset(CSVDataset):
 
 class PreparedData:
 
-    def __init__(self, train: np.ndarray, test: np.ndarray, anomaly_vect: np.ndarray, valid_prop=0.3):
+    def __init__(self, data_id, train: np.ndarray, test: np.ndarray, anomaly_vect: np.ndarray, valid_prop=0.3):
+        self.data_id = data_id
         train = train.squeeze()
         size = train.shape[0]
         train_size = math.floor(size * (1 - valid_prop))
@@ -145,7 +152,9 @@ class PreparedData:
         self.valid_anomaly = anomaly_vect[train_size + 1: size]
         self.test_anomaly = anomaly_vect[-self.test_size:]
 
-    def batchify(self, history_w, pred_w, batch_size,
+        self.logger = logging.getLogger("root")
+
+    def batchify(self, history_w, predict_w, batch_size,
                  overlap=False,
                  shuffle=True,
                  test_batch_size=None,
@@ -153,13 +162,15 @@ class PreparedData:
         if test_batch_size is None:
             test_batch_size = batch_size
 
-        train_loader = DataLoader(SlidingWindowDataset(self.train, history_w, pred_w, overlap, device=device),
-                                  batch_size=batch_size, shuffle=shuffle)
+        train_sw = SlidingWindowDataset(self.train, history_w, predict_w, overlap, device=device)
+        train_loader = DataLoader(train_sw, batch_size=batch_size, shuffle=shuffle)
 
-        valid_loader = DataLoader(SlidingWindowDataset(self.valid, history_w, pred_w, overlap, device=device),
-                                  batch_size=batch_size, shuffle=False)
+        valid_sw = SlidingWindowDataset(self.valid, history_w, predict_w, overlap, device=device)
+        valid_loader = DataLoader(valid_sw, batch_size=batch_size, shuffle=False)
 
-        test_loader = DataLoader(SlidingWindowDataset(self.test, history_w, pred_w, overlap, device=device),
-                                 batch_size=test_batch_size, shuffle=False)
+        test_sw = SlidingWindowDataset(self.test, history_w, predict_w, overlap, device=device)
+        test_loader = DataLoader(test_sw, batch_size=test_batch_size, shuffle=False)
+
+        self.logger.debug("Show head of train", extra={"detail": train_sw[0]})
 
         return train_loader, valid_loader, test_loader

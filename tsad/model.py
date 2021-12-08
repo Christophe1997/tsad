@@ -58,13 +58,18 @@ class Encoder(nn.Module):
         self.active1 = nn.ReLU()
         self.active2 = nn.Tanh()
 
-    def forward(self, x):
+    def forward(self, x, with_out=False):
+        # [B, L] -> [B, L, N]
         x = x.unsqueeze(-1)
         out, _ = self.rnn1(x)
         out = self.active1(out)
         out, hidden = self.rnn2(out)
 
-        return self.active2(hidden[0])
+        if with_out:
+            return out, hidden
+        else:
+            # [1, B, emb_dim]
+            return self.active2(hidden[0])
 
 
 class Decoder(nn.Module):
@@ -89,10 +94,10 @@ class Decoder(nn.Module):
 
 
 class AutoEncoder(nn.Module):
-    def __init__(self, window_size, emb_dim, hidden_dim, rnn_type="GRU"):
+    def __init__(self, window_size, emb_dim, hidden_dim, rnn_type="GRU", n_features=1):
         super(AutoEncoder, self).__init__()
-        self.encoder = Encoder(emb_dim, hidden_dim, rnn_type)
-        self.decoder = Decoder(window_size, emb_dim, hidden_dim, rnn_type)
+        self.encoder = Encoder(emb_dim, hidden_dim, rnn_type, n_features=n_features)
+        self.decoder = Decoder(window_size, emb_dim, hidden_dim, rnn_type, n_features=n_features)
 
     def forward(self, x):
         out = self.encoder(x)
@@ -135,9 +140,12 @@ class LinearDTransformer(nn.Module):
                  nlayers=6,
                  dim_feedforward=1024,
                  dropout=0.1,
+                 overlap=True,
                  batch_first=True):
         super(LinearDTransformer, self).__init__()
         self.batch_first = batch_first
+        self.seq_len = history_w
+        self.overlap = overlap
 
         self.pos_encoder = PositionalEncoding(d_model, dropout, batch_first=batch_first)
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=batch_first)
@@ -150,7 +158,10 @@ class LinearDTransformer(nn.Module):
             self.encoder = nn.Linear(n_features, d_model)
 
         self.decoder = nn.Linear(d_model, n_features)
-        self.fc = nn.Linear(history_w, predict_w)
+        if not overlap:
+            self.fc = nn.Linear(history_w, predict_w)
+        else:
+            self.fc = None
 
         self.init_weight()
 
@@ -158,22 +169,31 @@ class LinearDTransformer(nn.Module):
         initrange = 0.1
         self.decoder.bias.data.zero_()
         self.decoder.weight.data.uniform_(-initrange, initrange)
-        self.fc.bias.data.zero_()
-        self.fc.weight.data.uniform_(-initrange, initrange)
+        if self.fc is not None:
+            self.fc.bias.data.zero_()
+            self.fc.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, src, src_mask=None):
+        # [B, L] -> [B, emb_dim]
+        src = self.encoder(src)
+        if len(src.shape) < 3:
+            src = src.repeat(self.seq_len, 1, 1)
+            src = src.transpose(0, 1)
+
         src = self.pos_encoder(src)
         out = self.transformer_encoder(src, src_mask)
         out = self.decoder(out)
 
-        if self.batch_first:
-            # [B, L, N] -> [B, N, L]
-            out = out.permute(0, 2, 1)
-        else:
-            # [L, B, N] -> [B, N, L]
-            out = out.permute(1, 2, 0)
+        if not self.overlap:
+            if self.batch_first:
+                # [B, L, N] -> [B, N, L]
+                out = out.permute(0, 2, 1)
+            else:
+                # [L, B, N] -> [B, N, L]
+                out = out.permute(1, 2, 0)
 
-        out = self.fc(out)
-        # [B, N, L] -> [B, L, N]
-        out = out.permute(0, 2, 1)
+            out = self.fc(out)
+            # [B, N, L] -> [B, L, N]
+            out = out.permute(0, 2, 1)
+
         return out.squeeze(-1)
