@@ -10,7 +10,8 @@ import torch
 from tsad.data import UCRTSAD2021Dataset, KPIDataset, YahooS5Dataset, PreparedData
 from tsad import utils
 from tsad.wrapper import RNNModelWrapper, ModelWrapper
-from tsad.model import AutoEncoder, LinearDTransformer
+from tsad.models.rnn import RNNAutoEncoder
+from tsad.models.transformer import LinearDTransformer
 from tsad.trainer import Trainer
 
 parser = argparse.ArgumentParser("Train Script")
@@ -60,11 +61,11 @@ def get_dataset(dataset_type, dir_path):
 
 def train(prepared_data, args, device):
     if args.model_type == "autoencoder":
-        model = AutoEncoder(window_size=args.history_w,
-                            emb_dim=args.emb_dim,
-                            hidden_dim=args.hidden_dim,
-                            rnn_type=args.rnn_type,
-                            n_features=1)
+        model = RNNAutoEncoder(window_size=args.history_w,
+                               emb_dim=args.emb_dim,
+                               hidden_dim=args.hidden_dim,
+                               rnn_type=args.rnn_type,
+                               n_features=1)
         wrapper = RNNModelWrapper(model, device)
         trainer = Trainer(wrapper, prepared_data, device)
         path = f"{args.res}/{prepared_data.data_id}_{args.output}"

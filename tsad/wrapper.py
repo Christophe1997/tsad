@@ -1,6 +1,7 @@
 import abc
 import logging
 
+import numpy as np
 import torch
 from torch import nn, optim
 
@@ -62,6 +63,19 @@ class ModelWrapper(abc.ABC):
                     batch_idx + 1, total_batches, loss.item()))
 
         return total_loss / total_batches
+
+    def predict(self, dataloader):
+        self.model.eval()
+        actual, pred = [], []
+        with torch.no_grad():
+            for x_batch, y_batch in dataloader:
+                actual.append(y_batch)
+                pred.append(self.model(x_batch))
+
+        actual = np.vstack(actual)
+        pred = np.vstack(pred)
+
+        return actual, pred
 
     def dump(self, file):
         with open(file, "wb") as f:

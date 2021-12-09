@@ -227,6 +227,7 @@ def roc_curve(y_true, y_score):
                       yaxis_title="True Positive Rate",
                       title=f"ROC curve")
     fig.show()
+    return fig
 
 
 def precision_recall_curve(y_true, y_score):
@@ -238,3 +239,29 @@ def precision_recall_curve(y_true, y_score):
                       yaxis_title="Precision",
                       title=f"Precision-Recall curve")
     fig.show()
+    return fig
+
+
+def plot(y_actual, y_pred, intervals=None, min_y=-1, max_y=1):
+    x = np.arange(len(y_actual))
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x, y=y_actual, name="actual", line={"color": "green"}))
+    fig.add_trace(go.Scatter(x=x, y=y_pred, name="pred", line={"color": "red"}))
+
+    if intervals is not None:
+        for x0, x1 in intervals:
+            if x0 == x1:
+                fig.add_shape(
+                    go.layout.Shape(type="line", x0=x0, y0=min_y, x1=x0, y1=max_y,
+                                    line={"dash": "dash", "color": "LightSkyBlue"}))
+            else:
+                fig.add_shape(
+                    go.layout.Shape(type="rect", x0=x0, y0=min_y, x1=x1, y1=max_y,
+                                    line={"color": "LightSkyBlue"}, fillcolor="LightSkyBlue", opacity=0.5))
+
+    fig.show()
+    return fig
+
+
+def relative_intervals(intervals, inf=0):
+    return list(map(lambda ls: [ls[0] - inf, ls[1] - inf], intervals))
