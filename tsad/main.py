@@ -117,8 +117,7 @@ def train(prepared_data, args, device):
 
 
 # noinspection PyBroadException
-def main(main_id):
-    args = parser.parse_args()
+def main(main_id, args):
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -142,5 +141,6 @@ def main(main_id):
 
 
 if __name__ == "__main__":
+    args_ = parser.parse_args()
     timestamp = int(datetime.datetime.now().timestamp())
-    main(timestamp)
+    main(timestamp, args_)

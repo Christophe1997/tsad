@@ -1,7 +1,6 @@
 import abc
 import logging
 
-import numpy as np
 import torch
 from torch import nn, optim
 
@@ -72,8 +71,8 @@ class ModelWrapper(abc.ABC):
                 actual.append(y_batch)
                 pred.append(self.model(x_batch))
 
-        actual = np.vstack(actual)
-        pred = np.vstack(pred)
+        actual = torch.vstack(actual)
+        pred = torch.vstack(pred)
 
         return actual, pred
 

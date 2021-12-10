@@ -264,4 +264,4 @@ def plot(y_actual, y_pred, intervals=None, min_y=-1, max_y=1):
 
 
 def relative_intervals(intervals, inf=0):
-    return list(map(lambda ls: [ls[0] - inf, ls[1] - inf], intervals))
+    return list(filter(lambda ls: ls[0] > 0, map(lambda ls: [ls[0] - inf, ls[1] - inf], intervals)))
