@@ -56,8 +56,7 @@ class RNNEncoder(nn.Module):
         self.active2 = nn.Tanh()
 
     def forward(self, x, with_out=False):
-        # [B, L] -> [B, L, N]
-        x = x.unsqueeze(-1)
+        # [B, L, N]
         out, _ = self.rnn1(x)
         out = self.active1(out)
         out, hidden = self.rnn2(out)
@@ -73,6 +72,7 @@ class RNNDecoder(nn.Module):
     def __init__(self, seq_len, emb_dim, hidden_dim, rnn_type="GRU", n_features=1):
         super(RNNDecoder, self).__init__()
         self.seq_len = seq_len
+        self.n_features = n_features
         self.rnn1 = getattr(nn, rnn_type)(emb_dim, emb_dim, batch_first=True)
         self.rnn2 = getattr(nn, rnn_type)(emb_dim, hidden_dim, batch_first=True)
         self.linear = nn.Linear(hidden_dim, n_features)
@@ -85,7 +85,6 @@ class RNNDecoder(nn.Module):
         out = self.active1(out)
         out, _ = self.rnn2(out)
         out = self.linear(out)
-        out = out.squeeze(-1)
 
         return out
 

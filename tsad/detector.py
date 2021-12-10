@@ -1,8 +1,10 @@
 import abc
+import logging
 
 import numpy as np
 import torch
-import torch.nn.functional
+from scipy.stats import multivariate_normal
+from torch.nn import functional
 
 
 class FixSizedQueue:
@@ -30,118 +32,59 @@ class FixSizedQueue:
         return np.array(self.__data)[np.newaxis, :]
 
 
-class Detector:
+class Detector(abc.ABC):
+
+    def __init__(self, model):
+        self.model = model
+        self.logger = logging.getLogger("root")
 
     @abc.abstractmethod
-    def detect(self, observed):
+    def fit(self, dataloader):
+        pass
+
+    @abc.abstractmethod
+    def detect(self, x, y):
         pass
 
 
-class AutoEncoderDetector(Detector):
+class GaussianDetector(Detector):
+    def __init__(self, model):
+        super(GaussianDetector, self).__init__(model)
+        self.u = None
+        self.cov = None
+        self.muvnormal = None
 
-    def __init__(self, model, predict_window, threshold=3):
-        self.model = model.to(torch.device("cpu"))
-        self.predict_window = predict_window
-        self.threshold = threshold
+    def fit(self, dataloader):
+        err = []
+        for batch_idx, (x_batch, y_batch) in dataloader:
+            y_ = self.model(x_batch)
+            err.append(functional.l1_loss(y_, y_batch, reduction="none"))
+        err = torch.vstack(err).numpy()
+        # [T, L, N]
+        err = err.reshape(-1, err[-1])
+        self.logger.debug(f"During fitting, the error vector shape is {err.shape}")
 
-        self.queue = FixSizedQueue(predict_window)
-        self.peaks = []
-        self.n = predict_window - 1
+        self.u = np.mean(err, axis=0)
+        self.cov = np.cov(err, rowvar=False)
+        self.muvnormal = multivariate_normal(self.u, self.cov, allow_singular=True)
 
-    def detect(self, observed):
-        self.queue.enqueue(observed)
-        if not self.queue.is_full():
-            return observed, False
+    def detect(self, x, y):
+        seq_len, window_size = x.shape[0], x.shape[1]
+
+        y_ = self.model(x)
+        err = functional.l1_loss(y_, y, reduction="none").numpy()
+        err = err.reshape(-1, err[-1])
+        res_len = seq_len + window_size - 1
+        self.logger.debug(f"During detecting, the error vector shape is {err.shape}")
+        if self.muvnormal is None:
+            self.logger.warning("Detecting before fit")
+            return np.zeros((res_len, 1))
         else:
-            actual = torch.tensor(self.queue.to_numpy()).float()
-            self.model.eval()
-            with torch.no_grad():
-                pred = self.model(actual)
-            pred_val = pred[:, -1].item()
-            return pred_val, self.is_anomaly(pred)
+            scores = -self.muvnormal.logpdf(err)
+            scores = scores.reshape(-1, window_size)
+            lattice = np.full((window_size, res_len), np.nan)
+            for i, score in enumerate(scores):
+                lattice[i % window_size, i:i + window_size] = score
 
-    def is_anomaly(self, pred):
-        actual = torch.tensor(self.queue.to_numpy()).float()
-        score = torch.nn.functional.mse_loss(pred, actual)
-        return score > self.threshold
-
-    # Attempt to apply extreme value theory failed
-    #
-    # def is_anomaly(self, pred_val, observed):
-    #     self.n += 1
-    #     residue = np.abs(pred_val - observed)
-    #     if residue < self.threshold:
-    #         return False
-    #     else:
-    #         self.update_threshold(residue)
-    #         return True
-    #
-    # def update_threshold(self, residue):
-    #     self.peaks.append(residue)
-    #     if len(self.peaks) < 2:
-    #         return
-    #     else:
-    #         roots = self.find_root()
-    #         if len(roots) == 0:
-    #             return
-    #         else:
-    #             gamma, sigma = self.find_best(roots)
-    #             n_t = len(self.peaks)
-    #             q = 0.01
-    #             self.threshold = (sigma / gamma) * (np.power((q * self.n) / n_t, -gamma) - 1)
-    #
-    # def find_best(self, roots):
-    #     gamma1 = self.vx(roots[0]) - 1
-    #     sigma1 = gamma1 / roots[0]
-    #     if len(roots) == 1:
-    #         return gamma1, sigma1
-    #     else:
-    #         gamma2 = self.vx(roots[1]) - 1
-    #         sigma2 = gamma2 / roots[1]
-    #         if self.likelihood(gamma1, sigma1) > self.likelihood(gamma2, sigma2):
-    #             return gamma1, sigma1
-    #         else:
-    #             return gamma2, sigma2
-    #
-    # def likelihood(self, gamma, sigma):
-    #     peaks = np.array(self.peaks)
-    #     n_t = peaks.shape[-1]
-    #     peaks = peaks * gamma / sigma
-    #     peaks = peaks + 1
-    #     peaks = np.log(peaks)
-    #     res = np.sum(peaks)
-    #     res = res * (1 + 1 / gamma)
-    #     res = -res - n_t * np.log(sigma)
-    #     return res
-    #
-    # def find_root(self):
-    #     f = lambda x: self.ux(x) * self.vx(x) - 1
-    #     bounds1, bounds2 = self.get_bounds()
-    #     roots = []
-    #     if f(bounds1[0]) * f(bounds1[1]) < 0:
-    #         roots.append(optimize.root_scalar(f, method="brentq", bracket=bounds1).root)
-    #     if f(bounds2[0]) * f(bounds2[1]) < 0:
-    #         roots.append(optimize.root_scalar(f, method="brentq", bracket=bounds2).root)
-    #
-    #     return roots
-    #
-    # def ux(self, x):
-    #     peaks = np.array(self.peaks)
-    #     res = peaks * x
-    #     res = res + 1
-    #     res = 1 / res
-    #     return np.mean(res)
-    #
-    # def vx(self, x):
-    #     peaks = np.array(self.peaks)
-    #     res = peaks * x
-    #     res = res + 1
-    #     res = np.log(res)
-    #     return np.mean(res) + 1
-    #
-    # def get_bounds(self):
-    #     max_ = np.max(self.peaks)
-    #     min_ = np.min(self.peaks)
-    #     bounds1 = [-1 / max_ + 0.01, -0.01]
-    #     bounds2 = [0.01, 2 * (np.mean(self.peaks) - min_) / (min_ * min_) - 0.01]
-    #     return bounds1, bounds2
+            scores = np.nanmean(lattice, axis=0)
+            return scores

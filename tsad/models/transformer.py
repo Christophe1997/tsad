@@ -1,4 +1,5 @@
 import math
+
 import torch
 from torch import nn
 
@@ -44,6 +45,7 @@ class LinearDTransformer(nn.Module):
         self.batch_first = batch_first
         self.seq_len = history_w
         self.overlap = overlap
+        self.n_features = n_features
 
         self.pos_encoder = PositionalEncoding(d_model, dropout, batch_first=batch_first)
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=batch_first)
@@ -91,4 +93,4 @@ class LinearDTransformer(nn.Module):
             # [B, N, L] -> [B, L, N]
             out = out.permute(0, 2, 1)
 
-        return out.squeeze(-1)
+        return out

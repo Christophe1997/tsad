@@ -1,11 +1,10 @@
-import abc
 import logging
 
 import torch
 from torch import nn, optim
 
 
-class ModelWrapper(abc.ABC):
+class ModelWrapper:
 
     def __init__(self, model: nn.Module, device=torch.device("cpu"), lr=1e-3, weight_decay=0.01):
         self.device = device

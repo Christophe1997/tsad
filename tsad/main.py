@@ -8,12 +8,12 @@ import traceback
 import numpy as np
 import torch
 
-from tsad.data import UCRTSAD2021Dataset, KPIDataset, YahooS5Dataset, PreparedData
 from tsad import utils
-from tsad.wrapper import RNNModelWrapper, ModelWrapper
+from tsad.data import UCRTSAD2021Dataset, KPIDataset, YahooS5Dataset, PreparedData
 from tsad.models.rnn import RNNAutoEncoder
 from tsad.models.transformer import LinearDTransformer
 from tsad.trainer import Trainer
+from tsad.wrapper import RNNModelWrapper, ModelWrapper
 
 parser = argparse.ArgumentParser("Train Script")
 parser.add_argument("--data", type=str, default="./data/UCR_TimeSeriesAnomalyDatasets2021/UCR_Anomaly_FullData",

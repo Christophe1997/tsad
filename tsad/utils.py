@@ -24,12 +24,12 @@ def scan(arr: np.ndarray, window_size, stride=1):
     shape = (size - window_size) // stride + 1, window_size, arr.shape[-1]
     strides = shape[-1] * stride * elem_size, shape[-1] * elem_size, elem_size
     res = np.lib.stride_tricks.as_strided(arr, shape, strides=strides, writeable=False)
-    return res.squeeze(-1) if is_1d else res
+    return res
 
 
 def reconstruct(arr: np.ndarray, stride=1):
-    x, y = arr.shape
-    res = np.zeros((x - 1) * stride + y)
+    x, y, n = arr.shape
+    res = np.zeros([(x - 1) * stride + y, n])
     res[:y] = arr[0]
     idx = y
     for e in arr[1:]:
@@ -87,10 +87,11 @@ def get_cuda_usage():
         device_name = torch.cuda.get_device_name(device_id)
         resolved_mem = torch.cuda.memory_reserved(device_id) / 1024 ** 3
         allocated_mem = torch.cuda.memory_allocated(device_id) / 1024 ** 3
-        return "{}: {:.2f}GB/{:.2f}GB({:.2f}%)".format(device_name,
-                                                       allocated_mem,
-                                                       resolved_mem,
-                                                       allocated_mem / resolved_mem * 100 if resolved_mem != 0 else 0)
+        return "{}: {:.2f}GB/{:.2f}GB({:.2f}%)".format(
+            device_name,
+            allocated_mem,
+            resolved_mem,
+            allocated_mem / resolved_mem * 100 if resolved_mem != 0 else 0)
 
 
 def repackage_hidden(hidden):
@@ -117,82 +118,6 @@ def get_intevals(indexes):
     res.append(interval)
 
     return res
-
-
-def stats(loss_train, loss_valid, y_, y, label, sigma=2, beta=0.1, to_html=True, html_file=None):
-    (indexes,) = np.where(label == 1)
-    intervals = get_intevals(indexes)
-    fig = make_subplots(rows=4, cols=2,
-                        specs=[[{"colspan": 2}, None],
-                               [{"colspan": 2}, None],
-                               [{"rowspan": 2}, {"rowspan": 2}],
-                               [None, None]],
-                        subplot_titles=["loss curve", "fit curve", "ROC curve", "Precision-Recall curve"])
-
-    fig.add_trace(go.Scatter(x=np.arange(len(loss_train)), y=loss_train, mode="lines", name="train loss"),
-                  row=1, col=1)
-    fig.add_trace(go.Scatter(x=np.arange(len(loss_valid)), y=loss_valid, mode="lines", name="valid loss"),
-                  row=1, col=1)
-
-    fig.add_trace(go.Scatter(x=np.arange(len(y_)), y=y_, mode="lines", name="prediction",
-                             line={"color": "red"}), row=2, col=1)
-    fig.add_trace(go.Scatter(x=np.arange(len(y)), y=y, mode="lines", name="fact",
-                             line={"color": "green"}), row=2, col=1)
-    min_y = np.min(y)
-    max_y = np.max(y)
-    for x0, x1 in intervals:
-        if x0 == x1:
-            fig.add_shape(go.layout.Shape(type="line", xref='x', x0=x0, y0=min_y, x1=x0, y1=max_y,
-                                          line={"dash": "dash", "color": "LightSkyBlue"}), row=2, col=1)
-        else:
-            fig.add_shape(go.layout.Shape(type="rect", xref='x', x0=x0, y0=min_y, x1=x1, y1=max_y,
-                                          line={"color": "LightSkyBlue"}, fillcolor="LightSkyBlue", opacity=0.5),
-                          row=2, col=1)
-
-    prob = np.abs(y_ - y)
-
-    fpr, tpr, _ = metrics.roc_curve(y_true=label, y_score=prob)
-    roc_auc = metrics.auc(fpr, tpr)
-    fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", fill="tozeroy", line={"color": "#FF8E04"},
-                             showlegend=False), row=3, col=1)
-    fig.add_shape(go.layout.Shape(type="line", x0=0, y0=0, x1=1, y1=1, line={"dash": "dash", "color": "blue"}),
-                  row=3, col=1)
-    fig.add_annotation(
-        x=0.8,
-        y=0.2,
-        xref="x",
-        yref="y",
-        text=f"auc={roc_auc:.2f}",
-        showarrow=False,
-        align="center",
-        bgcolor="#BDBDBD",
-        opacity=0.8, row=3, col=1)
-
-    precision, recall, _ = metrics.precision_recall_curve(y_true=label, probas_pred=prob)
-    fig.add_trace(go.Scatter(x=recall, y=precision, mode="lines", fill="tozeroy", line={"color": "#FF8E04"},
-                             showlegend=False), row=3, col=2)
-    fig.add_shape(go.layout.Shape(type="line", x0=0, y0=1, x1=1, y1=0, line={"dash": "dash", "color": "blue"}),
-                  row=3, col=2)
-
-    fig.update_xaxes(title_text="False Positive Rate", row=3, col=1, range=[0, 1])
-    fig.update_yaxes(title_text="True Positive Rate", row=3, col=1, range=[0, 1])
-    fig.update_xaxes(title_text="Recall", row=3, col=2, range=[0, 1])
-    fig.update_yaxes(title_text="Precision", row=3, col=2, range=[0, 1])
-
-    label_pred = prob > sigma
-    label_pred.astype(int)
-    prec, reca, f_beta, _ = metrics.precision_recall_fscore_support(label, label_pred, beta=beta,
-                                                                    average="binary", zero_division=0)
-    title = f"precision: {prec:.2f}, recall: {reca:.2f}, F beta score(beta={beta}): {f_beta:.2f}"
-
-    fig.update_layout(title=title)
-
-    if to_html:
-        fig.write_html(html_file if html_file is not None else "stats.html")
-    else:
-        fig.show()
-
-    return prec, reca, f_beta
 
 
 def normalized(data, inf=-1, sup=1):
@@ -243,21 +168,26 @@ def precision_recall_curve(y_true, y_score):
 
 
 def plot(y_actual, y_pred, intervals=None, min_y=-1, max_y=1):
-    x = np.arange(len(y_actual))
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=y_actual, name="actual", line={"color": "green"}))
-    fig.add_trace(go.Scatter(x=x, y=y_pred, name="pred", line={"color": "red"}))
+    x, y = y_actual.shape
+    x = np.arange(x)
+    fig = make_subplots(y, 1)
+    for i in range(1, y + 1):
+        fig.add_trace(go.Scatter(x=x, y=y_actual[:, i - 1], name=f"actual_{i}", line={"color": "green"}), row=i, col=1)
+        fig.add_trace(go.Scatter(x=x, y=y_pred[:, i - 1], name=f"pred_{i}", line={"color": "red"}), row=i, col=1)
 
-    if intervals is not None:
-        for x0, x1 in intervals:
-            if x0 == x1:
-                fig.add_shape(
-                    go.layout.Shape(type="line", x0=x0, y0=min_y, x1=x0, y1=max_y,
-                                    line={"dash": "dash", "color": "LightSkyBlue"}))
-            else:
-                fig.add_shape(
-                    go.layout.Shape(type="rect", x0=x0, y0=min_y, x1=x1, y1=max_y,
-                                    line={"color": "LightSkyBlue"}, fillcolor="LightSkyBlue", opacity=0.5))
+        if intervals is not None:
+            for x0, x1 in intervals:
+                if x0 == x1:
+                    fig.add_shape(
+                        go.layout.Shape(type="line", x0=x0, y0=min_y, x1=x0, y1=max_y,
+                                        line={"dash": "dash", "color": "LightSkyBlue"}),
+                        row=i, col=1)
+                else:
+                    fig.add_shape(
+                        go.layout.Shape(type="rect", x0=x0, y0=min_y, x1=x1, y1=max_y,
+                                        line={"color": "LightSkyBlue"}, fillcolor="LightSkyBlue",
+                                        opacity=0.5),
+                        row=i, col=1)
 
     fig.show()
     return fig
