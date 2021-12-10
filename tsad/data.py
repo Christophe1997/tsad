@@ -69,7 +69,7 @@ class UCRTSAD2021Dataset(CSVDataset):
         anomaly_end = int(anomaly_end)
 
         data_id = f"ucr_{idx}_{name}"
-        data = pd.read_csv(fullpath).to_numpy()
+        data = pd.read_csv(fullpath, header=None).to_numpy()
         anomaly_vect = np.zeros(len(data))
         anomaly_vect[anomaly_start - 1: anomaly_end] = 1
         indices = [train_end, len(data)]
@@ -153,6 +153,8 @@ class PreparedData:
         self.test_anomaly = anomaly_vect[-self.test_size:]
 
         self.logger = logging.getLogger("root")
+        self.logger.info(f"{self.data_id}: "
+                         f"train size {self.train_size}, valid size {self.valid_size}, test size {self.test_size}")
 
     def batchify(self, history_w, predict_w, batch_size,
                  overlap=False,
@@ -171,6 +173,8 @@ class PreparedData:
         test_sw = SlidingWindowDataset(self.test, history_w, predict_w, overlap, device=device)
         test_loader = DataLoader(test_sw, batch_size=test_batch_size, shuffle=False)
 
+        self.logger.info(f"{self.data_id}: "
+                         f"train seqs {len(train_sw)}, valid seqs {len(valid_sw)}, test seqs {len(test_sw)}")
         self.logger.debug("Show head of train", extra={"detail": train_sw[0]})
 
         return train_loader, valid_loader, test_loader

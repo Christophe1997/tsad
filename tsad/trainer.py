@@ -34,7 +34,7 @@ class Trainer:
             start_time = time.time()
             train_loss = self.model_wrapper.train(self.train_loader)
             valid_loss = self.model_wrapper.eval(self.valid_loader)
-            self.logger.info("epoch {:03d}, time {:0<6.2f}s, train_loss {:0<6.3f}, valid loss {:0<6.3f}".format(
+            self.logger.info("epoch {:03d}, time {:0<6.2f}s, train_loss {:0<6.4f}, valid loss {:0<6.4f}".format(
                 epoch + 1, time.time() - start_time, train_loss, valid_loss))
             train_losses.append(train_loss)
             valid_losses.append(valid_loss)
@@ -43,7 +43,7 @@ class Trainer:
                     self.model_wrapper.dump(save_path)
                 best_valid_loss = valid_loss
 
-        self.logger.info(f"best valid loss: {best_valid_loss:0<6.3f}")
+        self.logger.info(f"best valid loss: {best_valid_loss:0<6.4f}")
         return train_losses, valid_losses
 
     def test(self, save_path=None):
@@ -51,5 +51,5 @@ class Trainer:
             self.model_wrapper.load(save_path)
 
         test_loss = self.model_wrapper.eval(self.test_loader)
-        self.logger.info(f"test loss: {test_loss:0<6.3f}")
+        self.logger.info(f"test loss: {test_loss:0<6.4f}")
         return test_loss

@@ -2,6 +2,7 @@ import argparse
 import datetime
 import logging
 import os
+import time
 import traceback
 
 import numpy as np
@@ -60,6 +61,8 @@ def get_dataset(dataset_type, dir_path):
 
 
 def train(prepared_data, args, device):
+    logger = logging.getLogger("root")
+    start = time.time()
     if args.model_type == "autoencoder":
         model = RNNAutoEncoder(window_size=args.history_w,
                                emb_dim=args.emb_dim,
@@ -69,15 +72,16 @@ def train(prepared_data, args, device):
         wrapper = RNNModelWrapper(model, device)
         trainer = Trainer(wrapper, prepared_data, device)
         path = f"{args.res}/{prepared_data.data_id}_{args.output}"
-        trainer.train(history_w=args.history_w,
-                      predict_w=0,
-                      epochs=args.epochs,
-                      batch_size=args.batch_size,
-                      overlap=True,
-                      shuffle=True,
-                      test_batch_size=None,
-                      save_path=path)
-        trainer.test(path)
+        train_losses, valid_losses = trainer.train(
+            history_w=args.history_w,
+            predict_w=0,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            overlap=True,
+            shuffle=True,
+            test_batch_size=None,
+            save_path=path)
+        test_loss = trainer.test(path)
 
     elif args.model_type == "linearTransformer":
         path = f"{args.res}/{prepared_data.data_id}_{args.output}"
@@ -93,17 +97,23 @@ def train(prepared_data, args, device):
         wrapper = ModelWrapper(model, device)
         trainer = Trainer(wrapper, prepared_data, device)
         path = f"{args.res}/{prepared_data.data_id}_ltf_{args.output}"
-        trainer.train(history_w=args.history_w,
-                      predict_w=args.predict_w,
-                      epochs=args.epochs,
-                      batch_size=args.batch_size,
-                      overlap=True,
-                      shuffle=True,
-                      test_batch_size=None,
-                      save_path=path)
-        trainer.test(path)
+        train_losses, valid_losses = trainer.train(
+            history_w=args.history_w,
+            predict_w=args.predict_w,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            overlap=True,
+            shuffle=True,
+            test_batch_size=None,
+            save_path=path)
+        test_loss = trainer.test(path)
     else:
         raise ValueError(f"Unknown model type: {args.model_type}")
+
+    logger.info(f"{prepared_data.data_id}: total cost {time.time() - start:.0f}s, "
+                f"train loss {train_losses[0]:0<6.4f} -> {train_losses[-1]:0<6.4f}, "
+                f"valid loss {valid_losses[0]:0<6.4f} -> {valid_losses[-1]:0<6.4f}, "
+                f"test loss {test_loss:0<6.4f}")
 
 
 # noinspection PyBroadException
@@ -117,7 +127,7 @@ def main(main_id):
     logger = utils.get_logger(args, f"{args.res}/{main_id}.log")
 
     logger.info(utils.dict2str(vars(args)))
-    logger.info(f"main timestamp: {main_id}")
+    logger.info(f"main ID: {main_id}")
     dataset = get_dataset(args.dataset, args.data)
     try:
         if args.one_file is not None:
