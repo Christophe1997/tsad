@@ -62,7 +62,11 @@ def train(prepared_data, args):
     device = torch.device(f"cuda:{args.gpu}") if torch.cuda.is_available() else torch.device("cpu")
     logger = TensorBoardLogger(args.output, name=f"{prepared_data.data_id}_{args.model_type}", default_hp_metric=False)
     early_stop_callback = EarlyStopping(monitor="valid_loss", min_delta=1e-4, patience=5)
-    trainer = pl.Trainer(max_epochs=args.epochs, logger=logger, callbacks=[early_stop_callback])
+    if args.gpu >= 0:
+        gpus = [args.gpu]
+    else:
+        gpus = 0
+    trainer = pl.Trainer(max_epochs=args.epochs, logger=logger, callbacks=[early_stop_callback], gpus=gpus)
 
     train_loader, valid_loader, test_loader = prepared_data.batchify(
         history_w=args.history_w,
