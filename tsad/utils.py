@@ -1,7 +1,3 @@
-import logging
-import os
-import sys
-
 import numpy as np
 import plotly.graph_objects as go
 import sklearn.metrics as metrics
@@ -37,42 +33,6 @@ def reconstruct(arr: np.ndarray, stride=1):
         idx += stride
 
     return res
-
-
-class CustomFormatter(logging.Formatter):
-
-    def __init__(self, extra_field, *args, **kwargs):
-        super(CustomFormatter, self).__init__(*args, **kwargs)
-        self.extra_field = extra_field
-
-    def format(self, record) -> str:
-        if not hasattr(record, self.extra_field):
-            setattr(record, self.extra_field, "")
-        return super(CustomFormatter, self).format(record)
-
-
-def get_logger(args, fp):
-    res = logging.getLogger("root")
-    for hadler in res.handlers[:]:
-        res.removeHandler(hadler)
-    fp_handler = logging.FileHandler(fp, mode='a+', encoding='utf8')
-    s_handler = logging.StreamHandler(stream=sys.stdout)
-    formatter = CustomFormatter('detail', '[%(asctime)s] %(levelname)s [%(name)s] %(message)s%(detail)s')
-    fp_handler.setFormatter(formatter)
-    s_handler.setFormatter(formatter)
-    res.addHandler(fp_handler)
-    res.addHandler(s_handler)
-    res.setLevel(level=args.log_level)
-    return res
-
-
-def create_dir(full_path):
-    abs_path = os.path.abspath(full_path)
-    dir_path = os.path.dirname(abs_path)
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
-
-    return dir_path
 
 
 def dict2str(d: dict):
@@ -151,7 +111,6 @@ def roc_curve(y_true, y_score):
                       xaxis_title="False Positive Rate",
                       yaxis_title="True Positive Rate",
                       title=f"ROC curve")
-    fig.show()
     return fig
 
 
@@ -163,17 +122,18 @@ def precision_recall_curve(y_true, y_score):
                       xaxis_title="Recall",
                       yaxis_title="Precision",
                       title=f"Precision-Recall curve")
-    fig.show()
     return fig
 
 
-def plot(y_actual, y_pred, intervals=None, min_y=-1, max_y=1):
+def plot(y_actual, y_pred=None, intervals=None, min_y=-1, max_y=1, max_dims=6):
     x, y = y_actual.shape
     x = np.arange(x)
+    y = min(y, max_dims)
     fig = make_subplots(y, 1)
     for i in range(1, y + 1):
         fig.add_trace(go.Scatter(x=x, y=y_actual[:, i - 1], name=f"actual_{i}", line={"color": "green"}), row=i, col=1)
-        fig.add_trace(go.Scatter(x=x, y=y_pred[:, i - 1], name=f"pred_{i}", line={"color": "red"}), row=i, col=1)
+        if y_pred is not None:
+            fig.add_trace(go.Scatter(x=x, y=y_pred[:, i - 1], name=f"pred_{i}", line={"color": "red"}), row=i, col=1)
 
         if intervals is not None:
             for x0, x1 in intervals:
@@ -189,7 +149,6 @@ def plot(y_actual, y_pred, intervals=None, min_y=-1, max_y=1):
                                         opacity=0.5),
                         row=i, col=1)
 
-    fig.show()
     return fig
 
 

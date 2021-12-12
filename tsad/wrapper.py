@@ -1,94 +1,57 @@
-import logging
-
+import pytorch_lightning as pl
 import torch
-from torch import nn, optim
+from torch import optim
+from torch.nn import functional
 
 
-class ModelWrapper:
+# noinspection PyAbstractClass
+class LightningWrapper(pl.LightningModule):
 
-    def __init__(self, model: nn.Module, device=torch.device("cpu"), lr=1e-3, weight_decay=0.01):
-        self.device = device
-        self.model = model.to(device)
-        self.model_type = model.__class__.__name__
-        self.lr = lr
-        self.weight_decay = weight_decay
-        self.optimizer = self.get_optimizer()
-        self.criterion = self.get_criterion()
-        self.logger = logging.getLogger("root")
+    def __init__(self, model_cls, loss_type="MAE", *args, **kwargs):
+        super(LightningWrapper, self).__init__()
+        self.model = model_cls(*args, **kwargs)
+        self.model_type = self.model.__class__.__name__
+        self.loss_type = loss_type
+        self.save_hyperparameters()
 
-    @classmethod
-    def from_static(cls, path, device=torch.device("cpu"), lr=1e-3, weight_decay=0.01):
-        with open(path, "rb") as f:
-            model = torch.load(f)
-
-        return cls(model, device, lr, weight_decay)
-
-    def get_optimizer(self):
-        return optim.AdamW(self.model.parameters(), self.lr, weight_decay=self.weight_decay)
-
-    def get_criterion(self):
-        return nn.L1Loss(reduction="mean").to(self.device)
-
-    def train(self, dataloader):
-        self.model.train()
-        total_loss = 0
-        total_batches = len(dataloader)
-
-        for batch_idx, (x_batch, y_batch) in enumerate(dataloader):
-            self.optimizer.zero_grad()
-            loss = self.criterion(self.model(x_batch), y_batch)
-            loss.backward()
-            self.train_extra()
-            self.optimizer.step()
-            total_loss += loss.item()
-            self.logger.debug("{:05d}/{:05d} batches, loss {:0<6.3f}".format(
-                batch_idx + 1, total_batches, loss.item()))
-
-        return total_loss / total_batches
-
-    def train_extra(self):
-        pass
-
-    def eval(self, dataloader):
-        self.model.eval()
-        total_loss = 0
-        total_batches = len(dataloader)
-        with torch.no_grad():
-            for batch_idx, (x_batch, y_batch) in enumerate(dataloader):
-                loss = self.criterion(self.model(x_batch), y_batch)
-                total_loss += loss.item()
-                self.logger.debug("{:05d}/{:05d} batches, loss {:0<6.3f}".format(
-                    batch_idx + 1, total_batches, loss.item()))
-
-        return total_loss / total_batches
-
-    def predict(self, dataloader):
-        self.model.eval()
+    def forward(self, dataloader):
         actual, pred = [], []
-        with torch.no_grad():
-            for x_batch, y_batch in dataloader:
-                actual.append(y_batch)
-                pred.append(self.model(x_batch))
+        for x_batch, y_batch in dataloader:
+            actual.append(y_batch)
+            pred.append(self.model(x_batch))
 
         actual = torch.vstack(actual)
         pred = torch.vstack(pred)
 
         return actual, pred
 
-    def dump(self, file):
-        with open(file, "wb") as f:
-            torch.save(self.model, f)
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        y_ = self.model(x)
+        loss = self.criterion(y_, y)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        return loss
 
-    def load(self, file):
-        with open(file, "rb") as f:
-            self.model = torch.load(f)
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        y_ = self.model(x)
+        loss = self.criterion(y_, y)
+        self.log("valid_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        y_ = self.model(x)
+        loss = self.criterion(y_, y)
+        return loss
 
-class RNNModelWrapper(ModelWrapper):
+    def test_epoch_end(self, outputs) -> None:
+        loss = torch.stack(outputs)
+        self.log("test_loss", loss)
 
-    def __init__(self, model, device, clip=10):
-        super(RNNModelWrapper, self).__init__(model, device)
-        self.clip = clip
+    def configure_optimizers(self):
+        optimizer = optim.AdamW(self.parameters(), lr=1e-3, weight_decay=0.01)
+        return optimizer
 
-    def train_extra(self):
-        nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
+    def criterion(self, y_actul, y_pred):
+        if self.loss_type == "MAE":
+            return functional.l1_loss(y_actul, y_pred, reduction="mean")

@@ -72,6 +72,7 @@ class UCRTSAD2021Dataset(CSVDataset):
         data = pd.read_csv(fullpath, header=None).to_numpy()
         anomaly_vect = np.zeros(len(data))
         anomaly_vect[anomaly_start - 1: anomaly_end] = 1
+        anomaly_vect = np.array(anomaly_vect[train_end:])
         indices = [train_end, len(data)]
         train, test, _ = np.split(data, indices)
 
@@ -102,6 +103,7 @@ class YahooS5Dataset(CSVDataset):
         data = data["value"].to_numpy()
         indices = [math.floor(len(data) * self.train_prop), len(data)]
         train, test, _ = np.split(data, indices)
+        anomaly_vect = np.array(anomaly_vect[len(train):])
 
         return data_id, utils.normalized(train), utils.normalized(test), anomaly_vect
 
@@ -122,12 +124,30 @@ class KPIDataset(CSVDataset):
         data_id = f"kpi_{kpi_id}"
         train = train_df["value"].to_numpy()
         test = test_df["value"].to_numpy()
-        anomaly_vect = np.hstack((train_df["label"].to_numpy(), test_df["label"].to_numpy()))
+        anomaly_vect = test_df["label"].to_numpy()
         return data_id, utils.normalized(train), utils.normalized(test), anomaly_vect
 
     def __iter__(self):
         for kpi_id in self.train_data["KPI ID"].unique():
             yield self.load_one(kpi_id)
+
+
+class ServerMachineDataset(CSVDataset):
+
+    def __init__(self, root_dir):
+        super(ServerMachineDataset, self).__init__(root_dir)
+        self.files = sorted(os.listdir(os.path.join(root_dir, "train")))
+
+    def load_one(self, file):
+        train = pd.read_csv(os.path.join(self.root_dir, "train", file), header=None).to_numpy()
+        test = pd.read_csv(os.path.join(self.root_dir, "test", file), header=None).to_numpy()
+        anomaly_test = pd.read_csv(os.path.join(self.root_dir, "test_label", file), header=None).to_numpy()
+        data_id = f"smd_{file.split('.')[0]}"
+        return data_id, train, test, anomaly_test.squeeze()
+
+    def __iter__(self):
+        for file in self.files:
+            yield self.load_one(file)
 
 
 class PreparedData:
@@ -146,11 +166,9 @@ class PreparedData:
         self.valid_size = size - train_size
         self.test_size = self.test.shape[0]
 
-        assert anomaly_vect.shape[0] == self.train_size + self.valid_size + self.test_size, "anomaly size not match"
+        assert anomaly_vect.shape[0] == self.test_size, "anomaly size not match"
 
-        self.train_anomaly = anomaly_vect[:train_size]
-        self.valid_anomaly = anomaly_vect[train_size + 1: size]
-        self.test_anomaly = anomaly_vect[-self.test_size:]
+        self.test_anomaly = anomaly_vect
 
         self.logger = logging.getLogger("root")
         self.logger.info(f"{self.data_id}: "
