@@ -45,6 +45,8 @@ parser.add_argument("--gpu", type=int, default=-1, help="GPU device, if there is
 parser.add_argument("--emb_dim", default=64, type=int, help="embedding dimension for autoencoder")
 parser.add_argument("--model_type", type=str, default="autoencoder", help="model type")
 parser.add_argument("--dim_feedforward", type=int, default=1024, help="dimension of transformer feedforward layer")
+parser.add_argument("--no_progress_bar", dest="enable_progress_bar", action="store_false",
+                    help="whether enable progress_bar")
 
 
 def get_dataset(dataset_type, dir_path):
@@ -66,7 +68,12 @@ def train(prepared_data, args):
         gpus = [args.gpu]
     else:
         gpus = 0
-    trainer = pl.Trainer(max_epochs=args.epochs, logger=logger, callbacks=[early_stop_callback], gpus=gpus)
+    trainer = pl.Trainer(
+        max_epochs=args.epochs,
+        logger=logger,
+        callbacks=[early_stop_callback],
+        gpus=gpus,
+        enable_progress_bar=args.enable_progress_bar)
 
     train_loader, valid_loader, test_loader = prepared_data.batchify(
         history_w=args.history_w,
