@@ -179,7 +179,7 @@ class PickleDataset(FileDataset):
 
     def __iter__(self):
         for idx in self.indices:
-            return self.load_one(idx)
+            yield self.load_one(idx)
 
 
 class PreparedData:
