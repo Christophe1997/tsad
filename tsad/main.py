@@ -7,7 +7,7 @@ import torch
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
-from tsad.data import UCRTSAD2021Dataset, KPIDataset, YahooS5Dataset, PreparedData
+from tsad.data import PickleDataset, PreparedData
 from tsad.models.rnn import RNNAutoEncoder
 from tsad.models.transformer import LinearDTransformer
 from tsad.wrapper import LightningWrapper
@@ -17,10 +17,10 @@ import warnings
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
 parser = argparse.ArgumentParser("Train Script")
-parser.add_argument("--data", type=str, default="./data/UCR_TimeSeriesAnomalyDatasets2021/UCR_Anomaly_FullData",
+parser.add_argument("--data", type=str, default="./data/KPI",
                     help="root dir of data")
-parser.add_argument("--dataset", type=str, default="UCR",
-                    help="dataset type(UCR, KPI, Yahoo), default 'UCR'")
+parser.add_argument("--dataset", type=str, default="KPI",
+                    help="dataset type(KPI, MSL, SMAP, SMD), default 'KPI'")
 parser.add_argument("-O", "--output", type=str, default="out", help="result dir")
 parser.add_argument("--seed", type=int, default=1234, help="random seed, default 1234")
 parser.add_argument("--rnn_type", type=str, default="LSTM",
@@ -50,12 +50,10 @@ parser.add_argument("--no_progress_bar", dest="enable_progress_bar", action="sto
 
 
 def get_dataset(dataset_type, dir_path):
-    if dataset_type == "UCR":
-        return UCRTSAD2021Dataset(dir_path)
-    elif dataset_type == "KPI":
-        return KPIDataset(dir_path)
-    elif dataset_type == "Yahoo":
-        return YahooS5Dataset(dir_path)
+    if dataset_type in ["KPI", "SMD"]:
+        return PickleDataset(dir_path, prefix=dataset_type)
+    elif dataset_type in ["MSL", "SMAP"]:
+        return PickleDataset(dir_path, indices=[dataset_type], prefix=dataset_type)
     else:
         raise ValueError(f"Unknown dataset type: {dataset_type}")
 
@@ -90,7 +88,7 @@ def train(prepared_data, args):
             emb_dim=args.emb_dim,
             hidden_dim=args.hidden_dim,
             rnn_type=args.rnn_type,
-            n_features=1)
+            n_features=prepared_data.n_features)
         trainer.gradient_clip_val = 2
         trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
         trainer.test(dataloaders=test_loader, ckpt_path="best")
@@ -109,6 +107,7 @@ def train(prepared_data, args):
             predict_w=args.predict_w,
             encoder=encoder,
             dim_feedforward=256,
+            n_features=prepared_data.n_features,
             dropout=args.dropout,
             overlap=True)
         trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)

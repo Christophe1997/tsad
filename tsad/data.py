@@ -167,11 +167,11 @@ class PickleDataset(FileDataset):
         self.indices = indices
 
     def load_one(self, index):
-        with open(f"{index}_train.pkl", "rb") as f:
+        with open(os.path.join(self.root_dir, f"{index}_train.pkl"), "rb") as f:
             train = pickle.load(f)
-        with open(f"{index}_test.pkl", "rb") as f:
+        with open(os.path.join(self.root_dir, f"{index}_test.pkl"), "rb") as f:
             test = pickle.load(f)
-        with open(f"{index}_test_label.pkl", "rb") as f:
+        with open(os.path.join(self.root_dir, f"{index}_test_label.pkl"), "rb") as f:
             anomaly_vect = pickle.load(f)
 
         data_id = f"{self.prefix}_{index}"
@@ -187,6 +187,7 @@ class PreparedData:
     def __init__(self, data_id, train: np.ndarray, test: np.ndarray, anomaly_vect: np.ndarray, valid_prop=0.3):
         self.data_id = data_id
         train = train.squeeze()
+        self.n_features = 1 if len(train.shape) == 1 else train.shape[-1]
         size = train.shape[0]
         train_size = math.floor(size * (1 - valid_prop))
         self.train = train[:train_size]
