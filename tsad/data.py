@@ -2,6 +2,7 @@ import abc
 import logging
 import math
 import os
+import pickle
 
 import numpy as np
 import pandas as pd
@@ -40,7 +41,7 @@ class SlidingWindowDataset(Dataset):
         return len(self.x)
 
 
-class CSVDataset(abc.ABC):
+class FileDataset(abc.ABC):
 
     def __init__(self, root_dir):
         root_dir = os.path.abspath(root_dir)
@@ -54,7 +55,7 @@ class CSVDataset(abc.ABC):
         pass
 
 
-class UCRTSAD2021Dataset(CSVDataset):
+class UCRTSAD2021Dataset(FileDataset):
 
     def __init__(self, root_dir):
         super(UCRTSAD2021Dataset, self).__init__(root_dir)
@@ -83,7 +84,7 @@ class UCRTSAD2021Dataset(CSVDataset):
             yield self.load_one(file)
 
 
-class YahooS5Dataset(CSVDataset):
+class YahooS5Dataset(FileDataset):
     def __init__(self, root_dir, test_prop=0.3):
         super(YahooS5Dataset, self).__init__(root_dir)
         self.files = [(prefix, file) for prefix in os.listdir(self.root_dir) if prefix.endswith("Benchmark")
@@ -112,7 +113,7 @@ class YahooS5Dataset(CSVDataset):
             yield self.load_one(prefix, file)
 
 
-class KPIDataset(CSVDataset):
+class KPIDataset(FileDataset):
     def __init__(self, root_dir, train="phase2_train.csv", test="phase2_test.csv"):
         super(KPIDataset, self).__init__(root_dir)
         self.train_data = pd.read_csv(os.path.join(self.root_dir, train), usecols=["value", "label", "KPI ID"])
@@ -132,7 +133,7 @@ class KPIDataset(CSVDataset):
             yield self.load_one(kpi_id)
 
 
-class ServerMachineDataset(CSVDataset):
+class ServerMachineDataset(FileDataset):
 
     def __init__(self, root_dir):
         super(ServerMachineDataset, self).__init__(root_dir)
@@ -148,6 +149,37 @@ class ServerMachineDataset(CSVDataset):
     def __iter__(self):
         for file in self.files:
             yield self.load_one(file)
+
+
+class PickleDataset(FileDataset):
+
+    def __init__(self, root_dir, indices=None, prefix="pickle"):
+        super(PickleDataset, self).__init__(root_dir)
+        self.prefix = prefix
+        if indices is None:
+            indices_path = os.path.join(self.root_dir, "index.txt")
+            if os.path.exists(indices_path):
+                with open(indices_path, "r") as f:
+                    indices = f.read().splitlines()
+            else:
+                raise ValueError(f"Either specify indices or have index.txt in {self.root_dir}")
+
+        self.indices = indices
+
+    def load_one(self, index):
+        with open(f"{index}_train.pkl", "rb") as f:
+            train = pickle.load(f)
+        with open(f"{index}_test.pkl", "rb") as f:
+            test = pickle.load(f)
+        with open(f"{index}_test_label.pkl", "rb") as f:
+            anomaly_vect = pickle.load(f)
+
+        data_id = f"{self.prefix}_{index}"
+        return data_id, train, test, anomaly_vect
+
+    def __iter__(self):
+        for idx in self.indices:
+            return self.load_one(idx)
 
 
 class PreparedData:
