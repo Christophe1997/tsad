@@ -15,6 +15,7 @@ from tsad.wrapper import LightningWrapper
 
 import warnings
 import logging
+import traceback
 
 logger = logging.getLogger("pytorch_lightning")
 logger.setLevel(logging.INFO)
@@ -141,4 +142,8 @@ def main(args):
 
 if __name__ == "__main__":
     args_ = parser.parse_args()
-    main(args_)
+    # noinspection PyBroadException
+    try:
+        main(args_)
+    except Exception:
+        logger.error(traceback.format_exc())
