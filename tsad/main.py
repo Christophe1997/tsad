@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import os
 
 import numpy as np
@@ -13,7 +14,11 @@ from tsad.models.transformer import LinearDTransformer
 from tsad.wrapper import LightningWrapper
 
 import warnings
+import logging
 
+logger = logging.getLogger("pytorch_lightning")
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.FileHandler(f"{datetime.datetime.now().strftime('%Y-%m-%dT%H_%M_%S')}.log"))
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
 parser = argparse.ArgumentParser("Train Script")
@@ -60,7 +65,8 @@ def get_dataset(dataset_type, dir_path):
 
 def train(prepared_data, args):
     device = torch.device(f"cuda:{args.gpu}") if torch.cuda.is_available() else torch.device("cpu")
-    logger = TensorBoardLogger(args.output, name=f"{prepared_data.data_id}_{args.model_type}", default_hp_metric=False)
+    tb_logger = TensorBoardLogger(args.output, name=f"{prepared_data.data_id}_{args.model_type}",
+                                  default_hp_metric=False)
     early_stop_callback = EarlyStopping(monitor="valid_loss", min_delta=1e-4, patience=5)
     if args.gpu >= 0:
         gpus = [args.gpu]
@@ -68,7 +74,7 @@ def train(prepared_data, args):
         gpus = 0
     trainer = pl.Trainer(
         max_epochs=args.epochs,
-        logger=logger,
+        logger=tb_logger,
         callbacks=[early_stop_callback],
         gpus=gpus,
         enable_progress_bar=args.enable_progress_bar)
