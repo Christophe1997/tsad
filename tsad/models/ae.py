@@ -1,50 +1,6 @@
+import torch
 from torch import nn
-
-
-class RNNModel(nn.Module):
-
-    def __init__(self, in_w, out_w, hidden_dim, num_layers, dropout=0.5, rnn_type="LSTM"):
-        super(RNNModel, self).__init__()
-        self.hidden_dim = hidden_dim
-        self.in_window = in_w
-        self.out_window = out_w
-        self.rnn_type = rnn_type
-        self.num_layers = num_layers
-
-        self.dropout = nn.Dropout(dropout)
-        if rnn_type in ["LSTM", "GRU"]:
-            self.rnn = getattr(nn, rnn_type)(1, hidden_dim, num_layers, dropout=dropout, batch_first=True)
-        else:
-            raise ValueError(f"rnn type {rnn_type} not support")
-
-        self.fc = nn.Linear(hidden_dim, out_w)
-
-    def forward(self, x):
-        x = x.unsqueeze(-1)
-
-        out, hidden = self.rnn(x)
-        hidden = hidden[0]
-        hidden = hidden.view(-1, self.hidden_dim)
-        hidden = self.dropout(hidden)
-        out = self.fc(hidden)
-        return out
-
-    def init_hidden(self, batch_size):
-        weight = next(self.parameters())
-        init = lambda: weight.new_zeros(self.num_layers, batch_size, self.hidden_dim)
-        if self.rnn_type == "LSTM":
-            return init(), init()
-        else:
-            return init()
-
-    def init_weight(self):
-        for name, param in self.rnn.named_parameters():
-            if "bias" in name:
-                nn.init.zeros_(param)
-            elif "weight" in name:
-                nn.init.orthogonal_(param)
-
-        nn.init.kaiming_normal_(self.fc.weight)
+from torch.autograd import Variable
 
 
 class RNNEncoder(nn.Module):
@@ -99,3 +55,32 @@ class RNNAutoEncoder(nn.Module):
         out = self.encoder(x)
         out = self.decoder(out)
         return out
+
+
+class LSTMAutoEncoder(nn.Module):
+    """Original paper, https://arxiv.org/abs/1607.00148
+
+    References:
+        https://github.com/KDD-OpenSource/DeepADoTS/blob/88c38320141a1062301cc9255f3e0fc111f55e80/src/algorithms/lstm_enc_dec_axl.py#L119
+    """
+
+    def __init__(self, hidden_dim, num_layers=2, n_features=1, dropout=0.1):
+        super(LSTMAutoEncoder, self).__init__()
+        self.encoder = nn.LSTM(n_features, hidden_dim, num_layers=num_layers, dropout=dropout, batch_first=True)
+        self.decoder = nn.LSTM(n_features, hidden_dim, num_layers=num_layers, dropout=dropout, batch_first=True)
+        self.hidden2out = nn.Linear(hidden_dim, n_features)
+
+    def forward(self, x, return_latent=False):
+        # [B, L, N] -> [1, B, hidden_dim]
+        _, enc_hidden = self.encoder(x)
+        dec_hidden = enc_hidden
+        output = Variable(torch.Tensor(x.size()).zero_())
+        for i in reversed(range(x.shape[1])):
+            # [B, hidden_dim]
+            output[:, i, :] = self.hidden2out(dec_hidden[0][0, :])
+            if self.training:
+                _, dec_hidden = self.decoder(x[:, i].unsqueeze(1), dec_hidden)
+            else:
+                _, dec_hidden = self.decoder(output[:, i].unsqueeze(1), dec_hidden)
+
+        return output if not return_latent else (output, enc_hidden[1][-1])

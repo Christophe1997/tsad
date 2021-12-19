@@ -1,9 +1,10 @@
-.idea
+.idea/
 **/*.log
 data/
 log/
 out/
 __pycache__
-.ipynb_checkpoints/
+**/.ipynb_checkpoints/
 .experiment/
 *.ipynb
+notebooks/

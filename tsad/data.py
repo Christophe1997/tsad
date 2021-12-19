@@ -1,5 +1,4 @@
 import abc
-import logging
 import math
 import os
 import pickle
@@ -8,6 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
+from sklearn.preprocessing import MinMaxScaler
 
 from tsad import utils
 
@@ -19,6 +19,7 @@ class SlidingWindowDataset(Dataset):
         self.history_w = history_w
         self.pred_w = pred_w
         data = np.squeeze(data)
+        data = MinMaxScaler().fit_transform(data)
 
         if overlap:
             data = utils.scan(data, history_w)
@@ -203,10 +204,6 @@ class PreparedData:
 
         self.test_anomaly = anomaly_vect
 
-        self.logger = logging.getLogger("root")
-        self.logger.info(f"{self.data_id}: "
-                         f"train size {self.train_size}, valid size {self.valid_size}, test size {self.test_size}")
-
     def batchify(self, history_w, predict_w, batch_size,
                  overlap=False,
                  shuffle=True,
@@ -223,9 +220,5 @@ class PreparedData:
 
         test_sw = SlidingWindowDataset(self.test, history_w, predict_w, overlap, device=device)
         test_loader = DataLoader(test_sw, batch_size=test_batch_size, shuffle=False)
-
-        self.logger.info(f"{self.data_id}: "
-                         f"train seqs {len(train_sw)}, valid seqs {len(valid_sw)}, test seqs {len(test_sw)}")
-        self.logger.debug("Show head of train", extra={"detail": train_sw[0]})
 
         return train_loader, valid_loader, test_loader
