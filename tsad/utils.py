@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import plotly.graph_objects as go
 import sklearn.metrics as metrics
@@ -154,3 +156,16 @@ def plot(y_actual, y_pred=None, intervals=None, min_y=-1, max_y=1, max_dims=6):
 
 def relative_intervals(intervals, inf=0):
     return list(filter(lambda ls: ls[0] > 0, map(lambda ls: [ls[0] - inf, ls[1] - inf], intervals)))
+
+
+def get_score(wrapper, dataloader, **kwargs):
+    wrapper.model.eval()
+    with torch.no_grad():
+        scores = wrapper(dataloader, **kwargs)
+    return scores
+
+
+def get_last_ckpt(root):
+    last_version = sorted(os.listdir(root))[-1]
+    root = os.path.join(root, last_version, "checkpoints")
+    ckpt_path = os.path.join(root, os.listdir(root)[0])

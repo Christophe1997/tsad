@@ -43,7 +43,7 @@ class Detector(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def detect(self, x, y):
+    def get_scores(self, dataloader):
         pass
 
 
@@ -53,6 +53,7 @@ class GaussianDetector(Detector):
         self.u = None
         self.cov = None
         self.muvnormal = None
+        self.model.eval()
 
     def fit(self, dataloader):
         err = []
@@ -67,24 +68,25 @@ class GaussianDetector(Detector):
         self.cov = np.cov(err, rowvar=False)
         self.muvnormal = multivariate_normal(self.u, self.cov, allow_singular=True)
 
-    def detect(self, x, y):
-        seq_len, window_size = x.shape[0], x.shape[1]
+    def get_scores(self, dataloader):
+        for x, y in dataloader:
+            seq_len, window_size = x.shape[0], x.shape[1]
 
-        y_ = self.model(x)
-        err = functional.l1_loss(y_, y, reduction="none").numpy()
-        err = err.reshape(-1, err[-1])
-        res_len = seq_len + window_size - 1
-        if self.muvnormal is None:
-            return np.zeros((res_len, 1))
-        else:
-            scores = -self.muvnormal.logpdf(err)
-            scores = scores.reshape(-1, window_size)
-            lattice = np.full((window_size, res_len), np.nan)
-            for i, score in enumerate(scores):
-                lattice[i % window_size, i:i + window_size] = score
+            y_ = self.model(x)
+            err = functional.l1_loss(y_, y, reduction="none").numpy()
+            err = err.reshape(-1, err[-1])
+            res_len = seq_len + window_size - 1
+            if self.muvnormal is None:
+                return np.zeros((res_len, 1))
+            else:
+                scores = -self.muvnormal.logpdf(err)
+                scores = scores.reshape(-1, window_size)
+                lattice = np.full((window_size, res_len), np.nan)
+                for i, score in enumerate(scores):
+                    lattice[i % window_size, i:i + window_size] = score
 
-            scores = np.nanmean(lattice, axis=0)
-            return scores
+                scores = np.nanmean(lattice, axis=0)
+                return scores
 
 
 class Anomaly(enum.Enum):

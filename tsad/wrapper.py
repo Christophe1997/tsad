@@ -1,9 +1,12 @@
+import pyro
+import pyro.distributions as dist
+import pyro.optim
 import pytorch_lightning as pl
 import torch
 from torch import optim
 from torch.nn import functional
-import pyro
-import pyro.optim
+
+from tsad.detector import GaussianDetector
 
 
 # noinspection PyAbstractClass
@@ -16,16 +19,10 @@ class LightningWrapper(pl.LightningModule):
         self.loss_type = loss_type
         self.save_hyperparameters()
 
-    def forward(self, dataloader):
-        actual, pred = [], []
-        for x_batch, y_batch in dataloader:
-            actual.append(y_batch)
-            pred.append(self.model(x_batch))
-
-        actual = torch.vstack(actual)
-        pred = torch.vstack(pred)
-
-        return actual, pred
+    def forward(self, valid_dataloader, test_dataloader):
+        detector = GaussianDetector(self.model)
+        detector.fit(valid_dataloader)
+        return detector.get_scores(test_dataloader)
 
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -91,16 +88,20 @@ class PyroLightningWrapper(pl.LightningModule):
         else:
             return 1.0
 
-    def forward(self, dataloader):
-        actual, pred = [], []
-        for x_batch, y_batch in dataloader:
-            actual.append(y_batch)
-            pred.append(self.model(x_batch))
+    def forward(self, dataloader, last_only=True):
+        scores = []
+        for x, _ in dataloader:
+            y_loc, y_scale = self.model(x, return_prob=True)
+            if last_only:
+                yt_loc, yt_scale = y_loc[:, -1, :], y_scale[:, -1, :]
+                xt = x[:, -1, :]
+                d = dist.Normal(yt_loc, yt_scale).to_event(1)
+                scores.append(-d.log_prob(xt))
+            else:
+                d = dist.Normal(y_loc, y_scale).to_event(1)
+                scores.append(-d.log_prob(x))
 
-        actual = torch.vstack(actual)
-        pred = torch.vstack(pred)
-
-        return actual, pred
+        return torch.cat(scores)
 
     def training_step(self, batch, batch_idx):
         x, _ = batch
@@ -118,6 +119,7 @@ class PyroLightningWrapper(pl.LightningModule):
         self.log("valid_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
     def test_step(self, batch, batch_idx):
+        # not work with checkpoint because the param not saved
         x, _ = batch
         optimizer = self.optimizers(use_pl_optimizer=False)
         loss = optimizer.evaluate_loss(x)
@@ -163,35 +165,40 @@ class DvaeLightningWrapper(pl.LightningModule):
         else:
             return 1.0
 
-    def forward(self, dataloader):
-        actual, pred = [], []
-        for x_batch, y_batch in dataloader:
-            actual.append(y_batch)
-            pred.append(self.model(x_batch))
+    def forward(self, dataloader, last_only=True):
+        scores = []
+        for x, _ in dataloader:
+            y_loc, y_logvar = self.model(x, return_prob=True, return_loss=False)
 
-        actual = torch.vstack(actual)
-        pred = torch.vstack(pred)
+            if last_only:
+                yt_loc, yt_logvar = y_loc[:, -1, :], y_logvar[:, -1, :]
+                yt_scale = torch.exp(0.5 * yt_logvar)
+                xt = x[:, -1, :]
+                d = dist.Normal(yt_loc, yt_scale).to_event(1)
+                scores.append(-d.log_prob(xt))
+            else:
+                y_scale = torch.exp(0.5 * y_logvar)
+                d = dist.Normal(y_loc, y_scale).to_event(1)
+                scores.append(-d.log_prob(x))
 
-        return actual, pred
+        return torch.cat(scores)
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        y_ = self.model(x)
+        x, _ = batch
         anneling_factor = self.get_anneling_factor(batch_idx)
-        loss = self.criterion(y, y_, anneling_factor=anneling_factor)
+        loss = self.criterion(x, anneling_factor)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        y_ = self.model(x)
-        loss = self.criterion(y, y_)
+        x, _ = batch
+        anneling_factor = self.get_anneling_factor(batch_idx)
+        loss = self.criterion(x, anneling_factor)
         self.log("valid_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
     def test_step(self, batch, batch_idx):
-        x, y = batch
-        y_ = self.model(x)
-        loss = self.criterion(y, y_)
+        x, _ = batch
+        loss = self.criterion(x, anneling_factor=1)
         return loss
 
     def test_epoch_end(self, outputs) -> None:
@@ -199,8 +206,10 @@ class DvaeLightningWrapper(pl.LightningModule):
         self.log("test_loss", torch.mean(loss))
 
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=3e-4, weight_decay=2, betas=(0.95, 0.999))
+        optimizer = optim.AdamW(self.parameters(), lr=1e-3, weight_decay=0.01)
         return optimizer
 
-    def criterion(self, y_actul, y_pred, anneling_factor=1.0):
-        return self.model.compute_loss(y_actul, y_pred, anneling_factor=anneling_factor)
+    def criterion(self, x, anneling_factor):
+        b, l, _ = x.shape
+        _, (recon, kld) = self.model(x)
+        return (recon + anneling_factor * kld) / (b * l)

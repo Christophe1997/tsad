@@ -1,23 +1,24 @@
 import argparse
 import datetime
+import logging
 import os
+import traceback
+import warnings
 
 import numpy as np
 import pyro
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from pytorch_lightning.loggers import TensorBoardLogger
+from sklearn import metrics
 
+from tsad import utils
 from tsad.data import PickleDataset, PreparedData
 from tsad.models.ae import RNNAutoEncoder
-from tsad.models.transformer import LinearDTransformer
 from tsad.models.dvae import VRNN
+from tsad.models.transformer import LinearDTransformer
 from tsad.wrapper import LightningWrapper, DvaeLightningWrapper, PyroLightningWrapper
-
-import warnings
-import logging
-import traceback
 
 logger = logging.getLogger("pytorch_lightning")
 logger.setLevel(logging.INFO)
@@ -45,6 +46,7 @@ def train(prepared_data, args):
     else:
         gpus = 0
     trainer = pl.Trainer(
+        min_epochs=50,
         max_epochs=args.epochs,
         logger=tb_logger,
         callbacks=[early_stop_callback],
@@ -70,12 +72,14 @@ def train(prepared_data, args):
             rnn_type=args.rnn_type,
             n_features=prepared_data.n_features)
 
+        trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+        root = f"{args.output}/{prepared_data.data_id}_{args.model_type}/"
+        wrapper = LightningWrapper.load_from_checkpoint(utils.get_last_ckpt(root))
+        scores = utils.get_score(wrapper, valid_loader, test_dataloader=test_loader)
+
     elif args.model_type == "linearTransformer":
         root = f"{args.output}/{prepared_data.data_id}_autoencoder/"
-        last_version = sorted(os.listdir(root))[-1]
-        root = os.path.join(root, last_version, "checkpoints")
-        ckpt_path = os.path.join(root, os.listdir(root)[0])
-        print(ckpt_path)
+        ckpt_path = utils.get_last_ckpt(root)
         encoder = LightningWrapper.load_from_checkpoint(ckpt_path, map_location=device).model.encoder
         wrapper = LightningWrapper(
             LinearDTransformer,
@@ -88,27 +92,44 @@ def train(prepared_data, args):
             dropout=args.dropout,
             overlap=True)
 
+        trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+        root = f"{args.output}/{prepared_data.data_id}_{args.model_type}/"
+        wrapper = LightningWrapper.load_from_checkpoint(utils.get_last_ckpt(root))
+        scores = utils.get_score(wrapper, valid_loader, test_dataloader=test_loader)
+
     elif args.model_type == "vrnn":
-        # trainer.gradient_clip_val = None
-        # wrapper = PyroLightningWrapper(
-        #     VRNN,
-        #     n_features=prepared_data.n_features,
-        #     hidden_dim=args.hidden_dim,
-        #     z_dim=args.emb_dim
-        # )
+        trainer.gradient_clip_val = None
+        wrapper = PyroLightningWrapper(
+            VRNN,
+            n_features=prepared_data.n_features,
+            hidden_dim=args.hidden_dim,
+            z_dim=args.emb_dim
+        )
+        pyro.clear_param_store()
+        wrapper.num_batches = len(train_loader)
+        trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+        root = f"{args.output}/{prepared_data.data_id}_{args.model_type}/"
+        wrapper = LightningWrapper.load_from_checkpoint(utils.get_last_ckpt(root))
+        scores = utils.get_score(wrapper, test_loader)
+
+    elif args.model_type == "vrnn_pt":
         wrapper = DvaeLightningWrapper(
             VRNN,
             n_features=prepared_data.n_features,
             hidden_dim=args.hidden_dim,
             z_dim=args.emb_dim,
             dropout=args.dropout)
+        trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+        root = f"{args.output}/{prepared_data.data_id}_{args.model_type}/"
+        wrapper = LightningWrapper.load_from_checkpoint(utils.get_last_ckpt(root))
+        scores = utils.get_score(wrapper, test_loader)
     else:
         raise ValueError(f"Unknown model type: {args.model_type}")
 
-    pyro.clear_param_store()
-    wrapper.num_batches = len(train_loader)
-    trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
-    trainer.test(dataloaders=test_loader, ckpt_path="best")
+    anomaly_vect = prepared_data.test_anomaly[args.history_w - 1:]
+    fpr, tpr, thresholds = metrics.roc_curve(y_true=anomaly_vect, y_score=scores)
+    roc_auc = metrics.auc(fpr, tpr)
+    logger.info(f"ROC auc = {roc_auc} on {prepared_data.data_id} with {args.model_type}")
 
 
 # noinspection PyBroadException

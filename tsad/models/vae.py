@@ -1,8 +1,8 @@
-import torch
-from torch import nn
 import pyro
 import pyro.distributions as dist
 import pyro.poutine as poutine
+import torch
+from torch import nn
 
 
 class NormalParam(nn.Module):
@@ -11,7 +11,6 @@ class NormalParam(nn.Module):
         super(NormalParam, self).__init__()
         self.mu = nn.Linear(input_dim, output_dim)
         self.logvar = nn.Linear(input_dim, output_dim)
-        self.softplus = nn.Softplus()
 
     def forward(self, x, return_logvar=False):
         loc = self.mu(x)
@@ -24,6 +23,9 @@ class NormalParam(nn.Module):
 
 
 class VRNN(nn.Module):
+    """ Original paper: A Recurrent Latent Variable Model for Sequential Data (https://arxiv.org/abs/1506.02216)
+    It's a implementation based on pyro.
+    """
 
     def __init__(self, n_features=1, hidden_dim=256, z_dim=4):
         super(VRNN, self).__init__()

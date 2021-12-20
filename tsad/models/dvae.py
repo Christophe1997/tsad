@@ -1,15 +1,26 @@
-import torch
-
-from torch import nn
 from collections import OrderedDict
+
+import numpy as np
+import torch
+from torch import nn
+
 from tsad.models.vae import NormalParam
-from torch.nn import functional
 
 
 def reparameterization(mean, logvar):
     std = torch.exp(0.5 * logvar)
     eps = torch.randn_like(std)
     return torch.addcmul(mean, eps, std)
+
+
+def kld_gaussian(mean1, mean2, logvar1, logvar2):
+    kld_elem = logvar2 - logvar1 + torch.div(logvar1.exp() + (mean1 - mean2) ** 2, logvar2.exp()) - 1
+    return torch.sum(0.5 * kld_elem)
+
+
+def nll_gaussian(mean, logvar, x):
+    nll_elem = logvar + torch.div((x - mean) ** 2, logvar.exp()) + np.log(2 * np.pi)
+    return torch.sum(0.5 * nll_elem)
 
 
 class MLPEmbedding(nn.Module):
@@ -51,63 +62,49 @@ class VRNN(nn.Module):
         self.feature_extra_x = MLPEmbedding(n_features, self.dim_feature_x, dropout=dropout)
         self.feature_extra_z = MLPEmbedding(z_dim, self.dim_feature_z, [self.dim_feature_z * 2], dropout=dropout)
 
-        # placeholder
-        self.z_loc = None
-        self.z_logvar = None
-        self.z = None
-        self.z_loc_prior = None
-        self.z_logvar_prior = None
-
     def encode(self, x, h):
         h_with_x = torch.cat([h, x], dim=1)
-        z_loc, z_logvar = self.phi_norm(h_with_x, return_logvar=True)
-        z = reparameterization(z_loc, z_logvar)
-        return z, z_loc, z_logvar
+        z_mean, z_logvar = self.phi_norm(h_with_x, return_logvar=True)
+        z = reparameterization(z_mean, z_logvar)
+        return z, z_mean, z_logvar
 
     def decode(self, z, h, return_prob=False):
         feature_z = self.feature_extra_z(z)
         z_with_h = torch.cat([feature_z, h], dim=1)
-        x_loc, x_scale = self.theta_norm_2(z_with_h)
-        return x_loc if not return_prob else (x_loc, x_scale)
+        x_mean, x_logvar = self.theta_norm_2(z_with_h, return_logvar=True)
+        return x_mean if not return_prob else (x_mean, x_logvar)
 
     def recurrence(self, x, z, h):
         x_with_z = torch.cat([x, z], dim=1)
         h = self.rnn(x_with_z, h)
         return h
 
-    def forward(self, x):
+    def forward(self, x, return_prob=False, return_loss=True):
         batch_size, seq_len, _ = x.shape
-        self.z_loc = x.new_zeros([batch_size, seq_len, self.z_dim])
-        self.z_logvar = x.new_zeros([batch_size, seq_len, self.z_dim])
-        y = x.new_zeros([batch_size, seq_len, self.n_features])
-        self.z = x.new_zeros([batch_size, seq_len, self.z_dim])
-
-        h = x.new_zeros([batch_size, seq_len, self.hidden_dim])
+        z_mean = x.new_zeros([batch_size, seq_len, self.z_dim])
+        z_logvar = x.new_zeros([batch_size, seq_len, self.z_dim])
+        y_mean = x.new_zeros([batch_size, seq_len, self.n_features])
+        y_logvar = x.new_zeros([batch_size, seq_len, self.n_features])
+        z_mean_prior = x.new_zeros([batch_size, seq_len, self.z_dim])
+        z_logvar_prior = x.new_zeros([batch_size, seq_len, self.z_dim])
         ht = x.new_zeros([batch_size, self.hidden_dim])
         feature_x = self.feature_extra_x(x)
 
         for t in range(seq_len):
             xt = feature_x[:, t, :]
-            zt, zt_loc, zt_logvar = self.encode(xt, ht)
-            yt = self.decode(zt, ht)
+            zt_mean_prior, zt_logvar_prior = self.theta_norm_1(ht, return_logvar=True)
+            zt, zt_mean, zt_logvar = self.encode(xt, ht)
+            yt_mean, yt_logvar = self.decode(zt, ht, return_prob=True)
 
-            h[:, t, :] = ht
-            self.z[:, t, :] = zt
-            self.z_loc[:, t, :] = zt_loc
-            self.z_logvar[:, t, :] = zt_logvar
-            y[:, t, :] = yt
+            z_mean[:, t, :] = zt_mean
+            z_logvar[:, t, :] = zt_logvar
+            z_mean_prior[:, t, :] = zt_mean_prior
+            z_logvar_prior[:, t, :] = zt_logvar_prior
+            y_mean[:, t, :] = yt_mean
+            y_logvar[:, t, :] = yt_logvar
             ht = self.recurrence(xt, zt, ht)
 
-        self.z_loc_prior, self.z_logvar_prior = self.theta_norm_1(h, return_logvar=True)
-        return y
-
-    def compute_loss(self, x, y, anneling_factor=1.0):
-        b, l, _ = x.shape
-
-        recon = functional.mse_loss(x, y, reduction="mean")
-        kld = -0.5 * torch.sum(
-            self.z_logvar - self.z_logvar_prior - torch.div(
-                (self.z_logvar.exp() + (self.z_loc - self.z_loc_prior).pow(2)),
-                self.z_logvar_prior.exp() + 1e-10))
-
-        return recon + kld * anneling_factor / (b * l)
+        recon = nll_gaussian(y_mean, y_logvar, x)
+        kld = kld_gaussian(z_mean, z_mean_prior, z_logvar, z_logvar_prior)
+        first_term = y_mean if not return_prob else (y_mean, y_logvar)
+        return first_term if not return_loss else (first_term, (recon, kld))

@@ -6,8 +6,8 @@ import pickle
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import MinMaxScaler
+from torch.utils.data import Dataset, DataLoader
 
 from tsad import utils
 
