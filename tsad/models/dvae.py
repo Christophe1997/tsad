@@ -30,8 +30,8 @@ class VRNN(nn.Module):
         self.z_dim = z_dim
         self.hidden_dim = hidden_dim
         self.n_features = n_features
-        self.dim_feature_x = hidden_dim // 2
-        self.dim_feature_z = 16
+        self.dim_feature_x = 64
+        self.dim_feature_z = 32
 
         self.rnn = nn.GRUCell(input_size=self.dim_feature_x + z_dim, hidden_size=hidden_dim)
         self.phi_norm = NormalParam(hidden_dim + self.dim_feature_x, z_dim)
@@ -39,7 +39,7 @@ class VRNN(nn.Module):
         self.theta_norm_2 = NormalParam(self.dim_feature_z + hidden_dim, n_features)
 
         self.feature_extra_x = MLPEmbedding(n_features, self.dim_feature_x, dropout=dropout)
-        self.feature_extra_z = MLPEmbedding(z_dim, self.dim_feature_z, [self.dim_feature_z * 2], dropout=dropout)
+        self.feature_extra_z = MLPEmbedding(z_dim, self.dim_feature_z, [self.dim_feature_z // 2], dropout=dropout)
         self.h0 = nn.Parameter(torch.zeros(hidden_dim))
 
     def encode(self, x, h):
