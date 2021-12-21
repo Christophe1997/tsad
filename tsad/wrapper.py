@@ -105,8 +105,10 @@ class PyroLightningWrapper(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, _ = batch
+        b, l, _ = x.shape
         optimizer = self.optimizers(use_pl_optimizer=False)
         loss = optimizer.step(x, annealing_factor=self.get_anneling_factor(batch_idx))
+        loss = loss / (b * l)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
     def training_epoch_end(self, outputs) -> None:
@@ -114,15 +116,17 @@ class PyroLightningWrapper(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x, _ = batch
+        b, l, _ = x.shape
         optimizer = self.optimizers(use_pl_optimizer=False)
-        loss = optimizer.evaluate_loss(x)
+        loss = optimizer.evaluate_loss(x) / (b * l)
         self.log("valid_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
     def test_step(self, batch, batch_idx):
-        # not work with checkpoint because the param not saved
+        # not work with checkpoint because the pyro param store not saved
         x, _ = batch
+        b, l, _ = x.shape
         optimizer = self.optimizers(use_pl_optimizer=False)
-        loss = optimizer.evaluate_loss(x)
+        loss = optimizer.evaluate_loss(x) / (b * l)
         return loss
 
     def test_epoch_end(self, outputs):

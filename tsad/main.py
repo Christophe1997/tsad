@@ -9,13 +9,14 @@ import numpy as np
 import pyro
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 from sklearn import metrics
 
 from tsad import utils
 from tsad.data import PickleDataset, PreparedData
 from tsad.models.ae import RNNAutoEncoder
+from tsad.models import vae
 from tsad.models.dvae import VRNN
 from tsad.models.transformer import LinearDTransformer
 from tsad.wrapper import LightningWrapper, DvaeLightningWrapper, PyroLightningWrapper
@@ -36,10 +37,19 @@ def get_dataset(dataset_type, dir_path):
         raise ValueError(f"Unknown dataset type: {dataset_type}")
 
 
+def train_with_pyro(trainer, model_cls, train_loader, valid_loader, *args, **kwargs):
+    trainer.gradient_clip_val = None
+    wrapper = PyroLightningWrapper(model_cls, *args, **kwargs)
+    wrapper.num_batches = len(train_loader)
+    pyro.clear_param_store()
+    trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+
+
 def train(prepared_data, args):
     device = torch.device(f"cuda:{args.gpu}") if torch.cuda.is_available() else torch.device("cpu")
-    tb_logger = TensorBoardLogger(args.output, name=f"{prepared_data.data_id}_{args.model_type}",
-                                  default_hp_metric=False)
+    tb_logger = TensorBoardLogger(args.output, name=f"{prepared_data.data_id}_{args.model_type}")
+
+    checkpoint_callback = ModelCheckpoint(monitor="valid_loss", filename='{epoch:02d}-{valid_loss:.2f}')
     early_stop_callback = EarlyStopping(monitor="valid_loss", min_delta=1e-4, patience=3)
     if args.gpu >= 0:
         gpus = [args.gpu]
@@ -49,7 +59,7 @@ def train(prepared_data, args):
         min_epochs=50,
         max_epochs=args.epochs,
         logger=tb_logger,
-        callbacks=[early_stop_callback],
+        callbacks=[early_stop_callback, checkpoint_callback],
         gpus=gpus,
         gradient_clip_val=10,
         enable_progress_bar=args.enable_progress_bar)
@@ -63,65 +73,91 @@ def train(prepared_data, args):
         test_batch_size=None,
         device=device)
 
-    if args.model_type == "autoencoder":
-        wrapper = LightningWrapper(
-            RNNAutoEncoder,
-            window_size=args.history_w,
-            emb_dim=args.emb_dim,
-            hidden_dim=args.hidden_dim,
-            rnn_type=args.rnn_type,
-            n_features=prepared_data.n_features)
+    best_model_path = None
+    ckpt_rootdir = f"{args.output}/{prepared_data.data_id}_{args.model_type}/"
 
-        trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
-        root = f"{args.output}/{prepared_data.data_id}_{args.model_type}/"
-        wrapper = LightningWrapper.load_from_checkpoint(utils.get_last_ckpt(root))
+    if args.model_type == "autoencoder":
+        if not args.test_only:
+            wrapper = LightningWrapper(
+                RNNAutoEncoder,
+                window_size=args.history_w,
+                emb_dim=args.emb_dim,
+                hidden_dim=args.hidden_dim,
+                rnn_type=args.rnn_type,
+                n_features=prepared_data.n_features)
+
+            trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+            best_model_path = checkpoint_callback.best_model_path
+
+        if best_model_path is None:
+            best_model_path = utils.get_last_ckpt(ckpt_rootdir)
+        wrapper = LightningWrapper.load_from_checkpoint(best_model_path)
         scores = utils.get_score(wrapper, valid_loader, test_dataloader=test_loader)
 
     elif args.model_type == "linearTransformer":
-        root = f"{args.output}/{prepared_data.data_id}_autoencoder/"
-        ckpt_path = utils.get_last_ckpt(root)
-        encoder = LightningWrapper.load_from_checkpoint(ckpt_path, map_location=device).model.encoder
-        wrapper = LightningWrapper(
-            LinearDTransformer,
-            d_model=args.emb_dim,
-            history_w=args.history_w,
-            predict_w=args.predict_w,
-            encoder=encoder,
-            dim_feedforward=256,
-            n_features=prepared_data.n_features,
-            dropout=args.dropout,
-            overlap=True)
+        if not args.test_only:
+            root = f"{args.output}/{prepared_data.data_id}_autoencoder/"
+            ckpt_path = utils.get_last_ckpt(root)
+            encoder = LightningWrapper.load_from_checkpoint(ckpt_path, map_location=device).model.encoder
+            wrapper = LightningWrapper(
+                LinearDTransformer,
+                d_model=args.emb_dim,
+                history_w=args.history_w,
+                predict_w=args.predict_w,
+                encoder=encoder,
+                dim_feedforward=256,
+                n_features=prepared_data.n_features,
+                dropout=args.dropout,
+                overlap=True)
 
-        trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
-        root = f"{args.output}/{prepared_data.data_id}_{args.model_type}/"
-        wrapper = LightningWrapper.load_from_checkpoint(utils.get_last_ckpt(root))
+            trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+            best_model_path = checkpoint_callback.best_model_path
+
+        if best_model_path is None:
+            best_model_path = utils.get_last_ckpt(ckpt_rootdir)
+        wrapper = LightningWrapper.load_from_checkpoint(best_model_path)
         scores = utils.get_score(wrapper, valid_loader, test_dataloader=test_loader)
 
     elif args.model_type == "vrnn":
-        trainer.gradient_clip_val = None
-        wrapper = PyroLightningWrapper(
-            VRNN,
-            n_features=prepared_data.n_features,
-            hidden_dim=args.hidden_dim,
-            z_dim=args.emb_dim
-        )
-        pyro.clear_param_store()
-        wrapper.num_batches = len(train_loader)
-        trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
-        root = f"{args.output}/{prepared_data.data_id}_{args.model_type}/"
-        wrapper = LightningWrapper.load_from_checkpoint(utils.get_last_ckpt(root))
+        if not args.test_only:
+            train_with_pyro(
+                trainer, vae.VRNN, train_loader, valid_loader,
+                n_features=prepared_data.n_features,
+                hidden_dim=args.hidden_dim,
+                z_dim=args.emb_dim)
+            best_model_path = checkpoint_callback.best_model_path
+        if best_model_path is None:
+            best_model_path = utils.get_last_ckpt(ckpt_rootdir)
+        wrapper = PyroLightningWrapper.load_from_checkpoint(best_model_path)
+        scores = utils.get_score(wrapper, test_loader)
+
+    elif args.model_type == "rvae":
+        if not args.test_only:
+            train_with_pyro(
+                trainer, vae.RVAE, train_loader, valid_loader,
+                n_features=prepared_data.n_features,
+                hidden_dim=args.hidden_dim,
+                z_dim=args.emb_dim)
+            best_model_path = checkpoint_callback.best_model_path
+        if best_model_path is None:
+            best_model_path = utils.get_last_ckpt(ckpt_rootdir)
+        wrapper = PyroLightningWrapper.load_from_checkpoint(best_model_path)
         scores = utils.get_score(wrapper, test_loader)
 
     elif args.model_type == "vrnn_pt":
-        wrapper = DvaeLightningWrapper(
-            VRNN,
-            n_features=prepared_data.n_features,
-            hidden_dim=args.hidden_dim,
-            z_dim=args.emb_dim,
-            dropout=args.dropout)
-        trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
-        root = f"{args.output}/{prepared_data.data_id}_{args.model_type}/"
-        wrapper = LightningWrapper.load_from_checkpoint(utils.get_last_ckpt(root))
+        if not args.test_only:
+            wrapper = DvaeLightningWrapper(
+                VRNN,
+                n_features=prepared_data.n_features,
+                hidden_dim=args.hidden_dim,
+                z_dim=args.emb_dim,
+                dropout=args.dropout)
+            wrapper.num_batches = len(train_loader)
+            trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+            best_model_path = checkpoint_callback.best_model_path
+        if best_model_path is None:
+            best_model_path = utils.get_last_ckpt(ckpt_rootdir)
+        wrapper = DvaeLightningWrapper.load_from_checkpoint(best_model_path)
         scores = utils.get_score(wrapper, test_loader)
     else:
         raise ValueError(f"Unknown model type: {args.model_type}")
@@ -129,7 +165,9 @@ def train(prepared_data, args):
     anomaly_vect = prepared_data.test_anomaly[args.history_w - 1:]
     fpr, tpr, thresholds = metrics.roc_curve(y_true=anomaly_vect, y_score=scores)
     roc_auc = metrics.auc(fpr, tpr)
-    logger.info(f"ROC auc = {roc_auc} on {prepared_data.data_id} with {args.model_type}")
+    if not args.test_only:
+        tb_logger.log_metrics({"hp_metric": roc_auc})
+    logger.info(f"ROC auc = {roc_auc:.3f} on {prepared_data.data_id} with {args.model_type}")
 
 
 # noinspection PyBroadException
@@ -179,10 +217,11 @@ if __name__ == "__main__":
     parser.add_argument("--gpu", type=int, default=-1, help="GPU device, if there is no gpu then use cpu")
     parser.add_argument("--emb_dim", default=64, type=int, help="embedding dimension for autoencoder")
     parser.add_argument("--model_type", type=str, default="autoencoder",
-                        help="model type('linearTransformer', 'autoencoder', 'vrnn')")
+                        help="model type('linearTransformer', 'autoencoder', 'vrnn', 'vrnn_pt', 'rvae')")
     parser.add_argument("--dim_feedforward", type=int, default=1024, help="dimension of transformer feedforward layer")
     parser.add_argument("--no_progress_bar", dest="enable_progress_bar", action="store_false",
                         help="whether enable progress_bar")
+    parser.add_argument("--test_only", action="store_true", help="test only")
 
     args_ = parser.parse_args()
     # noinspection PyBroadException

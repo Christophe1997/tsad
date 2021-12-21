@@ -1,10 +1,8 @@
-from collections import OrderedDict
-
 import numpy as np
 import torch
 from torch import nn
 
-from tsad.models.vae import NormalParam
+from tsad.models.submodule import NormalParam, MLPEmbedding
 
 
 def reparameterization(mean, logvar):
@@ -21,25 +19,6 @@ def kld_gaussian(mean1, mean2, logvar1, logvar2):
 def nll_gaussian(mean, logvar, x):
     nll_elem = logvar + torch.div((x - mean) ** 2, logvar.exp()) + np.log(2 * np.pi)
     return torch.sum(0.5 * nll_elem)
-
-
-class MLPEmbedding(nn.Module):
-
-    def __init__(self, input_dim, output_dim, hidden_layers: list = None, dropout=0.1, activate=nn.Tanh()):
-        super(MLPEmbedding, self).__init__()
-        dict_layers = OrderedDict()
-        if hidden_layers is None:
-            hidden_layers = []
-        layer_dims = [input_dim] + hidden_layers + [output_dim]
-        for i in range(1, len(layer_dims)):
-            dict_layers[f"linear_{i}"] = nn.Linear(layer_dims[i - 1], layer_dims[i])
-            dict_layers[f"activate_{i}"] = activate
-            dict_layers["dropout_{i}"] = nn.Dropout(dropout)
-
-        self.embeding = nn.Sequential(dict_layers)
-
-    def forward(self, x):
-        return self.embeding(x)
 
 
 class VRNN(nn.Module):
@@ -61,6 +40,7 @@ class VRNN(nn.Module):
 
         self.feature_extra_x = MLPEmbedding(n_features, self.dim_feature_x, dropout=dropout)
         self.feature_extra_z = MLPEmbedding(z_dim, self.dim_feature_z, [self.dim_feature_z * 2], dropout=dropout)
+        self.h0 = nn.Parameter(torch.zeros(hidden_dim))
 
     def encode(self, x, h):
         h_with_x = torch.cat([h, x], dim=1)
@@ -87,7 +67,7 @@ class VRNN(nn.Module):
         y_logvar = x.new_zeros([batch_size, seq_len, self.n_features])
         z_mean_prior = x.new_zeros([batch_size, seq_len, self.z_dim])
         z_logvar_prior = x.new_zeros([batch_size, seq_len, self.z_dim])
-        ht = x.new_zeros([batch_size, self.hidden_dim])
+        ht = self.h0.expand([batch_size, self.hidden_dim])
         feature_x = self.feature_extra_x(x)
 
         for t in range(seq_len):

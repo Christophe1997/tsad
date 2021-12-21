@@ -169,3 +169,4 @@ def get_last_ckpt(root):
     last_version = sorted(os.listdir(root))[-1]
     root = os.path.join(root, last_version, "checkpoints")
     ckpt_path = os.path.join(root, os.listdir(root)[0])
+    return ckpt_path
