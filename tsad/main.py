@@ -50,7 +50,7 @@ def train(prepared_data, args):
     tb_logger = TensorBoardLogger(args.output, name=f"{prepared_data.data_id}_{args.model_type}")
 
     checkpoint_callback = ModelCheckpoint(monitor="valid_loss", filename='{epoch:02d}-{valid_loss:.2f}')
-    early_stop_callback = EarlyStopping(monitor="valid_loss", min_delta=1e-4, patience=3)
+    early_stop_callback = EarlyStopping(monitor="valid_loss_epoch", min_delta=1e-4, patience=3)
     if args.gpu >= 0:
         gpus = [args.gpu]
     else:

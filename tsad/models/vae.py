@@ -78,14 +78,12 @@ class VRNN(nn.Module):
                 h = self.rnn(x_with_z, h)
 
     def encode(self, x, h):
-        x = self.feature_extra_x(x)
         h_with_x = torch.cat([h, x], dim=1)
         z_loc, z_scale = self.phi_norm(h_with_x)
         z = dist.Normal(z_loc, z_scale).to_event(1).sample()
         return z
 
     def decode(self, z, h, return_prob=False):
-        z = self.feature_extra_z(z)
         z_with_h = torch.cat([z, h], dim=1)
         x_loc, x_scale = self.theta_norm_2(z_with_h)
         return x_loc if not return_prob else (x_loc, x_scale)
@@ -95,15 +93,17 @@ class VRNN(nn.Module):
         h = x.new_zeros([b, self.hidden_dim])
         res = torch.zeros(x.shape)
         res_scale = torch.zeros(x.shape)
+        x = self.feature_extra_x(x)
         for t in range(l):
             xt = x[:, t, :]
             z = self.encode(xt, h)
+            z = self.feature_extra_z(z)
+
             if return_prob:
                 res[:, t, :], res_scale[:, t, :] = self.decode(z, h, return_prob)
             else:
                 res[:, t, :] = self.decode(z, h, return_prob)
-            feature_z = self.feature_extra_z(z)
-            x_with_z = torch.cat([xt, feature_z], dim=1)
+            x_with_z = torch.cat([xt, z], dim=1)
             h = self.rnn(x_with_z, h)
 
         return res if not return_prob else (res, res_scale)
