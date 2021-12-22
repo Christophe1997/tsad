@@ -91,8 +91,8 @@ class VRNN(nn.Module):
     def forward(self, x, return_prob=False):
         b, l, _ = x.shape
         h = x.new_zeros([b, self.hidden_dim])
-        res = torch.zeros(x.shape)
-        res_scale = torch.zeros(x.shape)
+        res = torch.zeros_like(x)
+        res_scale = torch.zeros_like(x)
         x = self.feature_extra_x(x)
         for t in range(l):
             xt = x[:, t, :]
@@ -115,7 +115,7 @@ class RVAE(nn.Module):
     It's an implementation based on pyro.
     """
 
-    def __init__(self, n_features=1, hidden_dim=256, z_dim=4, dropout=0.1, feature_x=None, feature_z=None):
+    def __init__(self, n_features=1, hidden_dim=256, z_dim=4, dropout=0.1, feature_x=64, feature_z=32):
         super(RVAE, self).__init__()
         self.z_dim = z_dim
         self.hidden_dim = hidden_dim
@@ -147,7 +147,7 @@ class RVAE(nn.Module):
     def model(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
         pyro.module("rvae", self)
-        prior_z = dist.Normal(torch.zeros([b, self.z_dim]), torch.ones([b, self.z_dim])).to_event(1)
+        prior_z = dist.Normal(x.new_zeros([b, self.z_dim]), x.new_ones([b, self.z_dim])).to_event(1)
         h = x.new_zeros([1, b, self.hidden_dim])
         with pyro.plate("data", b):
             for t in range(1, l + 1):
@@ -186,7 +186,7 @@ class RVAE(nn.Module):
         z_t = x.new_zeros([b, self.dim_feature_z])
 
         for t in range(l):
-            zh = self.phi_rnn2(z_t, zh)
+            zh = self.phi_rnn_2(z_t, zh)
             zh_with_xh_r = torch.cat([zh, xh_r[:, t, :]], dim=1)
             z_loc, z_scale = self.phi_norm(zh_with_xh_r)
             z_t = dist.Normal(z_loc, z_scale).to_event(1).sample()

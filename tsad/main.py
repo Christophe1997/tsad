@@ -50,7 +50,7 @@ def train(prepared_data, args):
     tb_logger = TensorBoardLogger(args.output, name=f"{prepared_data.data_id}_{args.model_type}")
 
     checkpoint_callback = ModelCheckpoint(monitor="valid_loss", filename='{epoch:02d}-{valid_loss:.2f}')
-    early_stop_callback = EarlyStopping(monitor="valid_loss_epoch", min_delta=1e-4, patience=3)
+    early_stop_callback = EarlyStopping(monitor="valid_loss_epoch", min_delta=1e-4, patience=5)
     if args.gpu >= 0:
         gpus = [args.gpu]
     else:
@@ -92,30 +92,7 @@ def train(prepared_data, args):
         if best_model_path is None:
             best_model_path = utils.get_last_ckpt(ckpt_rootdir)
         wrapper = LightningWrapper.load_from_checkpoint(best_model_path)
-        scores = utils.get_score(wrapper, valid_loader, test_dataloader=test_loader)
-
-    elif args.model_type == "linearTransformer":
-        if not args.test_only:
-            root = f"{args.output}/{prepared_data.data_id}_autoencoder/"
-            ckpt_path = utils.get_last_ckpt(root)
-            encoder = LightningWrapper.load_from_checkpoint(ckpt_path, map_location=device).model.encoder
-            wrapper = LightningWrapper(
-                LinearDTransformer,
-                d_model=args.emb_dim,
-                history_w=args.history_w,
-                predict_w=args.predict_w,
-                encoder=encoder,
-                dim_feedforward=256,
-                n_features=prepared_data.n_features,
-                dropout=args.dropout,
-                overlap=True)
-
-            trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
-            best_model_path = checkpoint_callback.best_model_path
-
-        if best_model_path is None:
-            best_model_path = utils.get_last_ckpt(ckpt_rootdir)
-        wrapper = LightningWrapper.load_from_checkpoint(best_model_path)
+        wrapper.model = wrapper.model.to(device)
         scores = utils.get_score(wrapper, valid_loader, test_dataloader=test_loader)
 
     elif args.model_type == "vrnn":
@@ -129,6 +106,7 @@ def train(prepared_data, args):
         if best_model_path is None:
             best_model_path = utils.get_last_ckpt(ckpt_rootdir)
         wrapper = PyroLightningWrapper.load_from_checkpoint(best_model_path)
+        wrapper.model = wrapper.model.to(device)
         scores = utils.get_score(wrapper, test_loader)
 
     elif args.model_type == "rvae":
@@ -142,6 +120,7 @@ def train(prepared_data, args):
         if best_model_path is None:
             best_model_path = utils.get_last_ckpt(ckpt_rootdir)
         wrapper = PyroLightningWrapper.load_from_checkpoint(best_model_path)
+        wrapper.model = wrapper.model.to(device)
         scores = utils.get_score(wrapper, test_loader)
 
     elif args.model_type == "vrnn_pt":
@@ -158,12 +137,13 @@ def train(prepared_data, args):
         if best_model_path is None:
             best_model_path = utils.get_last_ckpt(ckpt_rootdir)
         wrapper = DvaeLightningWrapper.load_from_checkpoint(best_model_path)
+        wrapper.model = wrapper.model.to(device)
         scores = utils.get_score(wrapper, test_loader)
     else:
         raise ValueError(f"Unknown model type: {args.model_type}")
 
     anomaly_vect = prepared_data.test_anomaly[args.history_w - 1:]
-    fpr, tpr, thresholds = metrics.roc_curve(y_true=anomaly_vect, y_score=scores)
+    fpr, tpr, thresholds = metrics.roc_curve(y_true=anomaly_vect, y_score=scores.cpu().numpy())
     roc_auc = metrics.auc(fpr, tpr)
     if not args.test_only:
         tb_logger.log_metrics({"hp_metric": roc_auc})
@@ -217,7 +197,7 @@ if __name__ == "__main__":
     parser.add_argument("--gpu", type=int, default=-1, help="GPU device, if there is no gpu then use cpu")
     parser.add_argument("--emb_dim", default=64, type=int, help="embedding dimension for autoencoder")
     parser.add_argument("--model_type", type=str, default="autoencoder",
-                        help="model type('linearTransformer', 'autoencoder', 'vrnn', 'vrnn_pt', 'rvae')")
+                        help="model type('autoencoder', 'vrnn', 'vrnn_pt', 'rvae')")
     parser.add_argument("--dim_feedforward", type=int, default=1024, help="dimension of transformer feedforward layer")
     parser.add_argument("--no_progress_bar", dest="enable_progress_bar", action="store_false",
                         help="whether enable progress_bar")
