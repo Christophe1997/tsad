@@ -4,6 +4,7 @@ import pyro.poutine as poutine
 import torch
 from torch import nn
 
+from tsad.models.submodule import PositionalEncoding
 from tsad.models.submodule import NormalParam, MLPEmbedding
 
 
@@ -13,10 +14,11 @@ class VRNN(nn.Module):
     It's an implementation based on pyro.
     """
 
-    def __init__(self, n_features=1, hidden_dim=256, z_dim=4, dropout=0.1, feature_x=64, feature_z=32):
+    def __init__(self, n_features=1, hidden_dim=256, z_dim=4, dropout=0.1, feature_x=64, feature_z=32, n_sample=1):
         super(VRNN, self).__init__()
         self.z_dim = z_dim
         self.hidden_dim = hidden_dim
+        self.n_sample = n_sample
 
         # embedding
         if feature_x is None:
@@ -80,8 +82,8 @@ class VRNN(nn.Module):
     def encode(self, x, h):
         h_with_x = torch.cat([h, x], dim=1)
         z_loc, z_scale = self.phi_norm(h_with_x)
-        z = dist.Normal(z_loc, z_scale).to_event(1).sample()
-        return z
+        z = dist.Normal(z_loc, z_scale).to_event(1).sample([self.n_sample])
+        return z.mean(dim=0)
 
     def decode(self, z, h, return_prob=False):
         z_with_h = torch.cat([z, h], dim=1)
@@ -115,10 +117,11 @@ class RVAE(nn.Module):
     It's an implementation based on pyro.
     """
 
-    def __init__(self, n_features=1, hidden_dim=256, z_dim=4, dropout=0.1, feature_x=64, feature_z=32):
+    def __init__(self, n_features=1, hidden_dim=256, z_dim=4, dropout=0.1, feature_x=64, feature_z=32, n_sample=1):
         super(RVAE, self).__init__()
         self.z_dim = z_dim
         self.hidden_dim = hidden_dim
+        self.n_sample = n_sample
 
         # embedding
         if feature_x is None:
@@ -189,8 +192,10 @@ class RVAE(nn.Module):
             zh = self.phi_rnn_2(z_t, zh)
             zh_with_xh_r = torch.cat([zh, xh_r[:, t, :]], dim=1)
             z_loc, z_scale = self.phi_norm(zh_with_xh_r)
-            z_t = dist.Normal(z_loc, z_scale).to_event(1).sample()
+            z_t = dist.Normal(z_loc, z_scale).to_event(1).sample([self.n_sample])
+            z_t = z_t.mean(dim=0)
             z[:, t, :] = z_t
+            z_t = self.feature_extra_z(z_t)
 
         return z
 
@@ -205,3 +210,13 @@ class RVAE(nn.Module):
         z = self.encode(x)
         x_loc, x_scale = self.decode(z)
         return x_loc if not return_prob else (x_loc, x_scale)
+
+
+class TransformerVae(nn.Module):
+
+    def __init__(self, d_model=256, n_features=1, nhead=8, nlayers=6, dim_feedforward=1024, dropout=0.1):
+        super(TransformerVae, self).__init__()
+        self.pos_encoder = PositionalEncoding(d_model, dropout, batch_first=True)
+        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
+    

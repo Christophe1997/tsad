@@ -1,6 +1,8 @@
 from collections import OrderedDict
 
 import torch
+import math
+import pyro.distributions as dist
 from torch import nn
 
 
@@ -38,3 +40,46 @@ class MLPEmbedding(nn.Module):
 
     def forward(self, x):
         return self.embeding(x)
+
+
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model: int, max_len: int = 5000, batch_first=True):
+        super().__init__()
+        self.batch_first = batch_first
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, d_model)
+        pe.requires_grad = False
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.batch_first:
+            return self.pe[:, :x.size(1)]
+        else:
+            return self.pe[:, :x.size(0)].transpose(0, 1)
+
+
+class LGSSMPositionalEncoding(nn.Module):
+
+    def __init__(self, d_model, max_len=500, batch_first=True):
+        super(LGSSMPositionalEncoding, self).__init__()
+        self.batch_first = batch_first
+        base_dist = dist.MultivariateNormal(torch.zeros(d_model), torch.eye(d_model))
+        matrix = torch.eye(d_model)
+        ghmm = dist.GaussianHMM(base_dist, matrix, base_dist, matrix, base_dist, duration=max_len)
+        pe = ghmm.sample().unsqueeze(0)
+        pe.requires_grad = False
+        self.register_buffer("pe", pe)
+
+    def forward(self, x):
+        if self.batch_first:
+            # [b, l, n]
+            return self.pe[:, :x.size(1)]
+        else:
+            # [l, b, n]
+            return self.pe[:, :x.size(0)].transpose(0, 1)

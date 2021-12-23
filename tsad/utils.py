@@ -92,7 +92,7 @@ def standardize(data):
 
 
 def roc_curve(y_true, y_score):
-    fpr, tpr, thresholds = metrics.roc_curve(y_true=y_true, y_score=y_score)
+    fpr, tpr, thresholds = metrics.roc_curve(y_true=y_true, y_score=y_score, pos_label=1)
     roc_auc = metrics.auc(fpr, tpr)
 
     fig = go.Figure(go.Scatter(x=fpr, y=tpr, mode="lines", fill="tozeroy", line={"color": "#FF8E04"}))
@@ -117,7 +117,7 @@ def roc_curve(y_true, y_score):
 
 
 def precision_recall_curve(y_true, y_score):
-    precision, recall, thresholds = metrics.precision_recall_curve(y_true=y_true, probas_pred=y_score)
+    precision, recall, thresholds = metrics.precision_recall_curve(y_true=y_true, probas_pred=y_score, pos_label=1)
     fig = go.Figure(go.Scatter(x=recall, y=precision, mode="lines", fill="tozeroy", line={"color": "#FF8E04"}))
     fig.add_shape(go.layout.Shape(type="line", x0=0, y0=1, x1=1, y1=0, line={"dash": "dash", "color": "blue"}))
     fig.update_layout(width=500, height=500,

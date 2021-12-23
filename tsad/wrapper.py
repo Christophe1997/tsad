@@ -139,7 +139,7 @@ class PyroLightningWrapper(pl.LightningModule):
             model=self.model.model,
             guide=self.model.guide,
             optim=pyro.optim.ClippedAdam({
-                "lr": 3e-4,
+                "lr": 1e-3,
                 "betas": (0.95, 0.999),
                 "clip_norm": 10,
                 "lrd": 0.99996,
@@ -158,7 +158,7 @@ class DvaeLightningWrapper(pl.LightningModule):
         self.save_hyperparameters()
 
         self.min_annealing_factor = 0.2
-        self.annealing_epochs = 50
+        self.annealing_epochs = 20
         self.epoch_idx = 0
         self.num_batches = None
 
@@ -210,7 +210,7 @@ class DvaeLightningWrapper(pl.LightningModule):
         self.log("test_loss", torch.mean(loss))
 
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=1e-3, weight_decay=0.01)
+        optimizer = optim.AdamW(self.parameters(), lr=1e-3, weight_decay=2, betas=(0.95, 0.999))
         return optimizer
 
     def criterion(self, x, anneling_factor):

@@ -18,7 +18,6 @@ from tsad.data import PickleDataset, PreparedData
 from tsad.models.ae import RNNAutoEncoder
 from tsad.models import vae
 from tsad.models.dvae import VRNN
-from tsad.models.transformer import LinearDTransformer
 from tsad.wrapper import LightningWrapper, DvaeLightningWrapper, PyroLightningWrapper
 
 logger = logging.getLogger("pytorch_lightning")
@@ -59,9 +58,10 @@ def train(prepared_data, args):
         min_epochs=50,
         max_epochs=args.epochs,
         logger=tb_logger,
-        callbacks=[early_stop_callback, checkpoint_callback],
+        callbacks=[early_stop_callback],
         gpus=gpus,
         gradient_clip_val=10,
+        deterministic=True,
         enable_progress_bar=args.enable_progress_bar)
 
     train_loader, valid_loader, test_loader = prepared_data.batchify(
@@ -86,6 +86,7 @@ def train(prepared_data, args):
                 rnn_type=args.rnn_type,
                 n_features=prepared_data.n_features)
 
+            trainer.callbacks.append(checkpoint_callback)
             trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
             best_model_path = checkpoint_callback.best_model_path
 
@@ -102,7 +103,7 @@ def train(prepared_data, args):
                 n_features=prepared_data.n_features,
                 hidden_dim=args.hidden_dim,
                 z_dim=args.emb_dim)
-            best_model_path = checkpoint_callback.best_model_path
+            # best_model_path = checkpoint_callback.best_model_path
         if best_model_path is None:
             best_model_path = utils.get_last_ckpt(ckpt_rootdir)
         wrapper = PyroLightningWrapper.load_from_checkpoint(best_model_path)
@@ -116,7 +117,7 @@ def train(prepared_data, args):
                 n_features=prepared_data.n_features,
                 hidden_dim=args.hidden_dim,
                 z_dim=args.emb_dim)
-            best_model_path = checkpoint_callback.best_model_path
+            # best_model_path = checkpoint_callback.best_model_path
         if best_model_path is None:
             best_model_path = utils.get_last_ckpt(ckpt_rootdir)
         wrapper = PyroLightningWrapper.load_from_checkpoint(best_model_path)
@@ -133,7 +134,7 @@ def train(prepared_data, args):
                 dropout=args.dropout)
             wrapper.num_batches = len(train_loader)
             trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
-            best_model_path = checkpoint_callback.best_model_path
+            # best_model_path = checkpoint_callback.best_model_path
         if best_model_path is None:
             best_model_path = utils.get_last_ckpt(ckpt_rootdir)
         wrapper = DvaeLightningWrapper.load_from_checkpoint(best_model_path)

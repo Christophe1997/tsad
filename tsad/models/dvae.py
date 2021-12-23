@@ -25,21 +25,32 @@ class VRNN(nn.Module):
     """ Original paper: A Recurrent Latent Variable Model for Sequential Data (https://arxiv.org/abs/1506.02216)
     """
 
-    def __init__(self, n_features=1, hidden_dim=256, z_dim=4, dropout=0.1):
+    def __init__(self, n_features=1, hidden_dim=256, z_dim=4, dropout=0.1, feature_x=64, feature_z=32):
         super(VRNN, self).__init__()
         self.z_dim = z_dim
         self.hidden_dim = hidden_dim
         self.n_features = n_features
-        self.dim_feature_x = 64
-        self.dim_feature_z = 32
 
-        self.rnn = nn.GRUCell(input_size=self.dim_feature_x + z_dim, hidden_size=hidden_dim)
+        # embedding
+        if feature_x is None:
+            self.dim_feature_x = n_features
+            self.feature_extra_x = nn.Identity()
+        else:
+            self.dim_feature_x = feature_x
+            self.feature_extra_x = MLPEmbedding(n_features, self.dim_feature_x, dropout=dropout)
+
+        if feature_z is None:
+            self.dim_feature_z = z_dim
+            self.feature_extra_z = nn.Identity()
+        else:
+            self.dim_feature_z = feature_z
+            self.feature_extra_z = MLPEmbedding(z_dim, self.dim_feature_z, [self.dim_feature_z // 2], dropout=dropout)
+
+        self.rnn = nn.GRUCell(input_size=self.dim_feature_x + self.dim_feature_z, hidden_size=hidden_dim)
         self.phi_norm = NormalParam(hidden_dim + self.dim_feature_x, z_dim)
         self.theta_norm_1 = NormalParam(hidden_dim, z_dim)
         self.theta_norm_2 = NormalParam(self.dim_feature_z + hidden_dim, n_features)
 
-        self.feature_extra_x = MLPEmbedding(n_features, self.dim_feature_x, dropout=dropout)
-        self.feature_extra_z = MLPEmbedding(z_dim, self.dim_feature_z, [self.dim_feature_z // 2], dropout=dropout)
         self.h0 = nn.Parameter(torch.zeros(hidden_dim))
 
     def encode(self, x, h):
@@ -48,8 +59,7 @@ class VRNN(nn.Module):
         z = reparameterization(z_mean, z_logvar)
         return z, z_mean, z_logvar
 
-    def decode(self, z, h, return_prob=False):
-        feature_z = self.feature_extra_z(z)
+    def decode(self, feature_z, h, return_prob=False):
         z_with_h = torch.cat([feature_z, h], dim=1)
         x_mean, x_logvar = self.theta_norm_2(z_with_h, return_logvar=True)
         return x_mean if not return_prob else (x_mean, x_logvar)
@@ -67,13 +77,14 @@ class VRNN(nn.Module):
         y_logvar = x.new_zeros([batch_size, seq_len, self.n_features])
         z_mean_prior = x.new_zeros([batch_size, seq_len, self.z_dim])
         z_logvar_prior = x.new_zeros([batch_size, seq_len, self.z_dim])
-        ht = self.h0.expand([batch_size, self.hidden_dim])
+        ht = x.new_zeros([batch_size, self.hidden_dim])
         feature_x = self.feature_extra_x(x)
 
         for t in range(seq_len):
             xt = feature_x[:, t, :]
             zt_mean_prior, zt_logvar_prior = self.theta_norm_1(ht, return_logvar=True)
             zt, zt_mean, zt_logvar = self.encode(xt, ht)
+            zt = self.feature_extra_z(zt)
             yt_mean, yt_logvar = self.decode(zt, ht, return_prob=True)
 
             z_mean[:, t, :] = zt_mean
