@@ -260,7 +260,9 @@ class TransformerVAE(nn.Module):
 
     def encode(self, x):
         embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
-        res = self.phi_transformer_encoder(embedding, mask=nn.Transformer.generate_square_subsequent_mask(x.size(1)))
+        mask = x.new_full((x.size(1), x.size(1)), float('-inf'))
+        mask = torch.triu(mask, diagonal=1)
+        res = self.phi_transformer_encoder(embedding, mask=mask)
         res = self.phi_dense(res)
         z_loc, z_scale = self.phi_norm(res)
         return z_loc, z_scale
