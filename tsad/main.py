@@ -49,13 +49,13 @@ def train(prepared_data, args):
     tb_logger = TensorBoardLogger(args.output, name=f"{prepared_data.data_id}_{args.model_type}")
 
     checkpoint_callback = ModelCheckpoint(monitor="valid_loss", filename='{epoch:02d}-{valid_loss:.2f}')
-    early_stop_callback = EarlyStopping(monitor="valid_loss_epoch", min_delta=1e-4, patience=5)
+    early_stop_callback = EarlyStopping(monitor="valid_loss_epoch", min_delta=2, patience=3)
     if args.gpu >= 0:
         gpus = [args.gpu]
     else:
         gpus = 0
     trainer = pl.Trainer(
-        min_epochs=50,
+        min_epochs=20,
         max_epochs=args.epochs,
         logger=tb_logger,
         callbacks=[early_stop_callback, checkpoint_callback],
@@ -101,7 +101,8 @@ def train(prepared_data, args):
                 trainer, vae.VRNN, train_loader, valid_loader,
                 n_features=prepared_data.n_features,
                 hidden_dim=args.hidden_dim,
-                z_dim=args.emb_dim)
+                z_dim=args.emb_dim,
+                dropout=args.dropout)
             best_model_path = checkpoint_callback.best_model_path
         if best_model_path is None:
             best_model_path = utils.get_last_ckpt(ckpt_rootdir)
@@ -115,7 +116,25 @@ def train(prepared_data, args):
                 trainer, vae.RVAE, train_loader, valid_loader,
                 n_features=prepared_data.n_features,
                 hidden_dim=args.hidden_dim,
-                z_dim=args.emb_dim)
+                z_dim=args.emb_dim,
+                dropout=args.dropout)
+            best_model_path = checkpoint_callback.best_model_path
+        if best_model_path is None:
+            best_model_path = utils.get_last_ckpt(ckpt_rootdir)
+        wrapper = PyroLightningWrapper.load_from_checkpoint(best_model_path)
+        wrapper.model = wrapper.model.to(device)
+        scores = utils.get_score(wrapper, test_loader)
+
+    elif args.model_type == "tfvae":
+        if not args.test_only:
+            train_with_pyro(
+                trainer, vae.TransformerVAE, train_loader, valid_loader,
+                n_features=prepared_data.n_features,
+                d_model=args.hidden_dim,
+                z_dim=args.emb_dim,
+                nlayers=2,
+                dim_feedforward=args.hidden_dim,
+                dropout=args.dropout)
             best_model_path = checkpoint_callback.best_model_path
         if best_model_path is None:
             best_model_path = utils.get_last_ckpt(ckpt_rootdir)

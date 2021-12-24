@@ -4,8 +4,7 @@ import pyro.poutine as poutine
 import torch
 from torch import nn
 
-from tsad.models.submodule import PositionalEncoding
-from tsad.models.submodule import NormalParam, MLPEmbedding
+from tsad.models.submodule import NormalParam, MLPEmbedding, Conv1DEmbedding, TimePositionalEncoding
 
 
 class VRNN(nn.Module):
@@ -66,6 +65,7 @@ class VRNN(nn.Module):
 
     def guide(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
+        pyro.module("vrnn", self)
         h = self.h0.expand([b, self.hidden_dim])
 
         feature_x = self.feature_extra_x(x)
@@ -84,13 +84,12 @@ class VRNN(nn.Module):
     def encode(self, x, h):
         h_with_x = torch.cat([h, x], dim=1)
         z_loc, z_scale = self.phi_norm(h_with_x)
-        z = dist.Normal(z_loc, z_scale).to_event(1).sample([self.n_sample])
-        return z.mean(dim=0)
+        return z_loc, z_scale
 
-    def decode(self, z, h, return_prob=False):
+    def decode(self, z, h):
         z_with_h = torch.cat([z, h], dim=1)
         x_loc, x_scale = self.theta_norm_2(z_with_h)
-        return x_loc if not return_prob else (x_loc, x_scale)
+        return x_loc, x_scale
 
     def forward(self, x, return_prob=False):
         b, l, _ = x.shape
@@ -100,13 +99,10 @@ class VRNN(nn.Module):
         x = self.feature_extra_x(x)
         for t in range(l):
             xt = x[:, t, :]
-            z = self.encode(xt, h)
-            z = self.feature_extra_z(z)
-
-            if return_prob:
-                res[:, t, :], res_scale[:, t, :] = self.decode(z, h, return_prob)
-            else:
-                res[:, t, :] = self.decode(z, h, return_prob)
+            z_loc, z_scale = self.encode(xt, h)
+            z = dist.Normal(z_loc, z_scale).to_event(1).sample([self.n_sample])
+            z = self.feature_extra_z(z.mean(0))
+            res[:, t, :], res_scale[:, t, :] = self.decode(z, h)
             x_with_z = torch.cat([xt, z], dim=1)
             h = self.rnn(x_with_z, h)
 
@@ -165,6 +161,7 @@ class RVAE(nn.Module):
 
     def guide(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
+        pyro.module("rvae", self)
         x = self.feature_extra_x(x)
         x_reverse = torch.flip(x, [1])
         xh, _ = self.phi_rnn_1(x_reverse)
@@ -214,11 +211,70 @@ class RVAE(nn.Module):
         return x_loc if not return_prob else (x_loc, x_scale)
 
 
-class TransformerVae(nn.Module):
+class TransformerVAE(nn.Module):
 
-    def __init__(self, d_model=256, n_features=1, nhead=8, nlayers=6, dim_feedforward=1024, dropout=0.1):
-        super(TransformerVae, self).__init__()
-        self.pos_encoder = PositionalEncoding(d_model, dropout, batch_first=True)
+    def __init__(self, n_features=1, d_model=256, z_dim=4, nhead=8, nlayers=6, dim_feedforward=1024, dropout=0.1,
+                 num_nf=10):
+        super(TransformerVAE, self).__init__()
+        self.z_dim = z_dim
+
+        # inference
+        self.phi_pos_encoder = TimePositionalEncoding(d_model, batch_first=True)
+        self.phi_x_embedding = Conv1DEmbedding(n_features, d_model)
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True)
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
-    
+        self.phi_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
+        self.phi_dense = MLPEmbedding(d_model, d_model, dropout=0.5)
+        self.phi_norm = NormalParam(d_model, z_dim)
+
+        self.phi_nf = nn.ModuleList(dist.transforms.Planar(z_dim) for _ in range(num_nf))
+
+        # generation
+        self.theta_rnn = nn.GRU(z_dim, d_model, batch_first=True)
+        self.theta_dense = MLPEmbedding(d_model, d_model, dropout=0.5)
+        self.theta_norm = NormalParam(d_model, n_features)
+
+    def get_default_ghmm(self, seq_len):
+        base_dist = dist.MultivariateNormal(torch.zeros(self.z_dim), torch.eye(self.z_dim))
+        matrix = torch.eye(self.z_dim)
+        ghmm = dist.GaussianHMM(base_dist, matrix, base_dist, matrix, base_dist, duration=seq_len)
+        return ghmm
+
+    def model(self, x, annealing_factor=1.0):
+        b, l, _ = x.shape
+        pyro.module("tfVAE", self)
+        ghmm = self.get_default_ghmm(l)
+        with pyro.plate("data", b):
+            with poutine.scale(None, annealing_factor):
+                z = pyro.sample("z", ghmm)
+            x_loc, x_scale = self.decode(z)
+            pyro.sample("obs", dist.Normal(x_loc, x_scale).to_event(2), obs=x)
+
+    def guide(self, x, annealing_factor=1.0):
+        b, l, _ = x.shape
+        pyro.module("tfVAE", self)
+        with pyro.plate("data", b):
+            z_loc, z_scale = self.encode(x)
+            base_dist = dist.Normal(z_loc, z_scale).to_event(2)
+            with poutine.scale(None, annealing_factor):
+                pyro.sample("z", dist.TransformedDistribution(base_dist, [nf for nf in self.phi_nf]))
+
+    def encode(self, x):
+        embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
+        res = self.phi_transformer_encoder(embedding, mask=nn.Transformer.generate_square_subsequent_mask(x.size(1)))
+        res = self.phi_dense(res)
+        z_loc, z_scale = self.phi_norm(res)
+        return z_loc, z_scale
+
+    def decode(self, z):
+        res, _ = self.theta_rnn(z)
+        res = self.theta_dense(res)
+        x_loc, x_scale = self.theta_norm(res)
+        return x_loc, x_scale
+
+    def forward(self, x, return_prob=True):
+        z_loc, z_scale = self.encode(x)
+        base_dist = dist.Normal(z_loc, z_scale).to_event(2)
+        tf_dist = dist.TransformedDistribution(base_dist, [nf for nf in self.phi_nf])
+        z = tf_dist.sample()
+        x_loc, x_scale = self.decode(z)
+        return x_loc if not return_prob else (x_loc, x_scale)

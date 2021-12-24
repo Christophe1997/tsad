@@ -159,7 +159,7 @@ def relative_intervals(intervals, inf=0):
 
 
 def get_score(wrapper, dataloader, **kwargs):
-    wrapper.eval()
+    wrapper.model.eval()
     with torch.no_grad():
         scores = wrapper(dataloader, **kwargs)
     return scores

@@ -143,7 +143,7 @@ class PyroLightningWrapper(pl.LightningModule):
                 "betas": (0.95, 0.999),
                 "clip_norm": 10,
                 "lrd": 0.99996,
-                "weight_decay": 2}),
+                "weight_decay": 1e-2}),
             loss=loss)
 
         return svi
