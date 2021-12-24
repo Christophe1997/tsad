@@ -4,7 +4,7 @@ import pyro.poutine as poutine
 import torch
 from torch import nn
 
-from tsad.models.submodule import NormalParam, MLPEmbedding, Conv1DEmbedding, TimePositionalEncoding
+from tsad.models.submodule import NormalParam, MLPEmbedding, Conv1DEmbedding, PositionalEncoding
 
 
 class VRNN(nn.Module):
@@ -219,30 +219,36 @@ class TransformerVAE(nn.Module):
         self.z_dim = z_dim
 
         # inference
-        self.phi_pos_encoder = TimePositionalEncoding(d_model, batch_first=True)
+        self.phi_pos_encoder = PositionalEncoding(d_model, batch_first=True)
         self.phi_x_embedding = Conv1DEmbedding(n_features, d_model)
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True)
         self.phi_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
-        self.phi_dense = MLPEmbedding(d_model, d_model, dropout=0.5)
+        self.phi_dense = MLPEmbedding(d_model, d_model, dropout=dropout)
         self.phi_norm = NormalParam(d_model, z_dim)
 
         self.phi_nf = nn.ModuleList(dist.transforms.Planar(z_dim) for _ in range(num_nf))
 
         # generation
-        self.theta_rnn = nn.GRU(z_dim, d_model, batch_first=True)
-        self.theta_dense = MLPEmbedding(d_model, d_model, dropout=0.5)
+        self.theta_z_embedding = Conv1DEmbedding(z_dim, d_model)
+        self.theta_rnn = nn.GRU(d_model, d_model, batch_first=True)
+        self.theta_dense = MLPEmbedding(d_model, d_model, dropout=dropout)
         self.theta_norm = NormalParam(d_model, n_features)
+
+        # placeholder
+        self.ghmm = None
 
     def model(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
         pyro.module("tfVAE", self)
-        matrix = torch.diag(x.new_ones(self.z_dim))
-        base_dist = dist.MultivariateNormal(x.new_zeros(self.z_dim), matrix)
-        ghmm = dist.GaussianHMM(base_dist, matrix, base_dist, matrix, base_dist, duration=l)
+        if self.ghmm is None:
+            matrix = torch.diag(x.new_ones(self.z_dim))
+            base_dist = dist.MultivariateNormal(x.new_zeros(self.z_dim), matrix)
+            ghmm = dist.GaussianHMM(base_dist, matrix, base_dist, matrix, base_dist, duration=l)
+            self.ghmm = ghmm
 
         with pyro.plate("data", b):
             with poutine.scale(None, annealing_factor):
-                z = pyro.sample("z", ghmm)
+                z = pyro.sample("z", self.ghmm)
             x_loc, x_scale = self.decode(z)
             pyro.sample("obs", dist.Normal(x_loc, x_scale).to_event(2), obs=x)
 
@@ -265,12 +271,13 @@ class TransformerVAE(nn.Module):
         return z_loc, z_scale
 
     def decode(self, z):
+        z = self.theta_z_embedding(z)
         res, _ = self.theta_rnn(z)
         res = self.theta_dense(res)
         x_loc, x_scale = self.theta_norm(res)
         return x_loc, x_scale
 
-    def forward(self, x, return_prob=True):
+    def forward(self, x, return_prob=False):
         z_loc, z_scale = self.encode(x)
         base_dist = dist.Normal(z_loc, z_scale).to_event(2)
         tf_dist = dist.TransformedDistribution(base_dist, [nf for nf in self.phi_nf])
