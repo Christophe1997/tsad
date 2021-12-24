@@ -43,10 +43,12 @@ class VRNN(nn.Module):
         self.theta_norm_1 = NormalParam(hidden_dim, z_dim)
         self.theta_norm_2 = NormalParam(self.dim_feature_z + hidden_dim, n_features)
 
+        self.h0 = nn.Parameter(torch.zeros(hidden_dim))
+
     def model(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
         pyro.module("vrnn", self)
-        h = x.new_zeros([b, self.hidden_dim])
+        h = self.h0.expand([b, self.hidden_dim])
 
         feature_x = self.feature_extra_x(x)
         with pyro.plate("data", b):
@@ -64,7 +66,7 @@ class VRNN(nn.Module):
 
     def guide(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
-        h = x.new_zeros([b, self.hidden_dim])
+        h = self.h0.expand([b, self.hidden_dim])
 
         feature_x = self.feature_extra_x(x)
         with pyro.plate("data", b):
