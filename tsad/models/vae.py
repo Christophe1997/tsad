@@ -233,16 +233,13 @@ class TransformerVAE(nn.Module):
         self.theta_dense = MLPEmbedding(d_model, d_model, dropout=0.5)
         self.theta_norm = NormalParam(d_model, n_features)
 
-    def get_default_ghmm(self, seq_len):
-        base_dist = dist.MultivariateNormal(torch.zeros(self.z_dim), torch.eye(self.z_dim))
-        matrix = torch.eye(self.z_dim)
-        ghmm = dist.GaussianHMM(base_dist, matrix, base_dist, matrix, base_dist, duration=seq_len)
-        return ghmm
-
     def model(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
         pyro.module("tfVAE", self)
-        ghmm = self.get_default_ghmm(l)
+        matrix = torch.diag(x.new_ones(self.z_dim))
+        base_dist = dist.MultivariateNormal(x.new_zeros(self.z_dim), matrix)
+        ghmm = dist.GaussianHMM(base_dist, matrix, base_dist, matrix, base_dist, duration=l)
+
         with pyro.plate("data", b):
             with poutine.scale(None, annealing_factor):
                 z = pyro.sample("z", ghmm)
