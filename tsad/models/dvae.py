@@ -104,7 +104,7 @@ class VRNN(nn.Module):
 
 class Omni(nn.Module):
 
-    def __init__(self, n_features=1, hidden_dim=500, z_dim=4, dropout=0.1, dense_dim=None, num_nf=20):
+    def __init__(self, n_features=1, hidden_dim=500, z_dim=4, dropout=0.1, dense_dim=None):
         super(Omni, self).__init__()
         self.z_dim = z_dim
         self.hidden_dim = hidden_dim
@@ -117,7 +117,6 @@ class Omni(nn.Module):
         self.phi_rnn = nn.GRUCell(n_features, hidden_dim)
         self.phi_dense = MLPEmbedding(hidden_dim + z_dim, dense_dim, [dense_dim], dropout=dropout, activate=nn.ReLU())
         self.phi_p_z_x = NormalParam(hidden_dim, z_dim)
-        self.phi_nf = nn.ModuleList(dist.transforms.Planar(z_dim) for _ in range(num_nf))
 
         # generation
         self.theta_rnn = nn.GRUCell(z_dim, hidden_dim)
@@ -133,9 +132,8 @@ class Omni(nn.Module):
         h_with_zt = torch.cat([h, z_prev], dim=1)
         h_with_zt = self.phi_dense(h_with_zt)
         zt_loc, zt_scale, zt_dist = self.phi_p_z_x(h_with_zt, return_dist=True)
-        zt_dist_tf = dist.TransformedDistribution(zt_dist, [nf for nf in self.phi_nf])
 
-        return zt_dist_tf
+        return zt_loc, zt_scale, zt_dist
 
     def forward(self, x, return_prob=False, return_loss=True):
         b, l, _ = x.shape
@@ -151,7 +149,7 @@ class Omni(nn.Module):
         for t in range(l):
             xt = x[:, t, :]
             phi_h = self.phi_rnn(xt, phi_h)
-            zt_dist = self.inference(phi_h, zt)
+            _, _, zt_dist = self.inference(phi_h, zt)
             zt = zt_dist.rsample()
             theta_h = self.theta_rnn(zt, theta_h)
             yt_loc, yt_scale, yt_dist = self.generate(theta_h)
@@ -160,7 +158,7 @@ class Omni(nn.Module):
 
             z_prior = z_prior_dist.rsample()
             recon += -yt_dist.log_prob(xt).sum()
-            kld += (zt_dist.log_prob(zt) - z_prior_dist.log_prob(z_prior)).sum()
+            kld += (tdist.kl_divergence(zt_dist, z_prior_dist)).sum()
             z_prior_dist = dist.Normal(z_prior, x.new_ones([b, self.z_dim])).to_event(1)
 
         first_term = y_loc if not return_prob else (y_loc, y_scale)
