@@ -4,24 +4,23 @@ import torch
 import math
 import pyro.distributions as dist
 from torch import nn
-from torch.nn import functional
 
 
 class NormalParam(nn.Module):
 
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, input_dim, output_dim, eps=1e-4):
         super(NormalParam, self).__init__()
-        self.mu = nn.Linear(input_dim, output_dim)
-        self.logvar = nn.Linear(input_dim, output_dim)
+        self.x2mu = nn.Linear(input_dim, output_dim)
+        self.x2scale = nn.Sequential(
+            nn.Linear(input_dim, output_dim),
+            nn.Softplus()
+        )
+        self.eps = eps
 
-    def forward(self, x, return_logvar=False):
-        loc = self.mu(x)
-        logvar = self.logvar(x)
-        if return_logvar:
-            return loc, logvar
-        else:
-            scale = torch.exp(0.5 * logvar)
-            return loc, scale
+    def forward(self, x, return_dist=False):
+        loc = self.x2mu(x)
+        scale = self.x2scale(x) + self.eps
+        return (loc, scale) if not return_dist else (loc, scale, dist.Normal(loc, scale).to_event(1))
 
 
 class MLPEmbedding(nn.Module):

@@ -158,7 +158,7 @@ class DvaeLightningWrapper(pl.LightningModule):
         self.save_hyperparameters()
 
         self.min_annealing_factor = 0.2
-        self.annealing_epochs = 20
+        self.annealing_epochs = 10
         self.epoch_idx = 0
         self.num_batches = None
 
@@ -172,16 +172,14 @@ class DvaeLightningWrapper(pl.LightningModule):
     def forward(self, dataloader, last_only=True):
         scores = []
         for x, _ in dataloader:
-            y_loc, y_logvar = self.model(x, return_prob=True, return_loss=False)
+            y_loc, y_scale = self.model(x, return_prob=True, return_loss=False)
 
             if last_only:
-                yt_loc, yt_logvar = y_loc[:, -1, :], y_logvar[:, -1, :]
-                yt_scale = torch.exp(0.5 * yt_logvar)
+                yt_loc, yt_scale = y_loc[:, -1, :], y_scale[:, -1, :]
                 xt = x[:, -1, :]
                 d = dist.Normal(yt_loc, yt_scale).to_event(1)
                 scores.append(-d.log_prob(xt))
             else:
-                y_scale = torch.exp(0.5 * y_logvar)
                 d = dist.Normal(y_loc, y_scale).to_event(1)
                 scores.append(-d.log_prob(x))
 
@@ -189,6 +187,7 @@ class DvaeLightningWrapper(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, _ = batch
+        b, l, _ = x.shape
         anneling_factor = self.get_anneling_factor(batch_idx)
         loss = self.criterion(x, anneling_factor)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
@@ -196,6 +195,7 @@ class DvaeLightningWrapper(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x, _ = batch
+        b, l, _ = x.shape
         anneling_factor = self.get_anneling_factor(batch_idx)
         loss = self.criterion(x, anneling_factor)
         self.log("valid_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
@@ -214,6 +214,5 @@ class DvaeLightningWrapper(pl.LightningModule):
         return optimizer
 
     def criterion(self, x, anneling_factor):
-        b, l, _ = x.shape
         _, (recon, kld) = self.model(x)
-        return (recon + anneling_factor * kld) / (b * l)
+        return (recon + anneling_factor * kld) / x.shape[0]

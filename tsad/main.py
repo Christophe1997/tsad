@@ -17,7 +17,7 @@ from tsad import utils
 from tsad.data import PickleDataset, PreparedData
 from tsad.models.ae import RNNAutoEncoder
 from tsad.models import vae
-from tsad.models.dvae import VRNN
+from tsad.models.dvae import VRNN, Omni
 from tsad.wrapper import LightningWrapper, DvaeLightningWrapper, PyroLightningWrapper
 
 logger = logging.getLogger("pytorch_lightning")
@@ -158,6 +158,24 @@ def train(prepared_data, args):
         wrapper = DvaeLightningWrapper.load_from_checkpoint(best_model_path)
         wrapper.model = wrapper.model.to(device)
         scores = utils.get_score(wrapper, test_loader)
+
+    elif args.model_type == "omni":
+        if not args.test_only:
+            wrapper = DvaeLightningWrapper(
+                Omni,
+                n_features=prepared_data.n_features,
+                hidden_dim=args.hidden_dim,
+                z_dim=args.emb_dim,
+                dropout=args.dropout)
+            wrapper.num_batches = len(train_loader)
+            trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+            best_model_path = checkpoint_callback.best_model_path
+        if best_model_path is None:
+            best_model_path = utils.get_last_ckpt(ckpt_rootdir)
+        wrapper = DvaeLightningWrapper.load_from_checkpoint(best_model_path)
+        wrapper.model = wrapper.model.to(device)
+        scores = utils.get_score(wrapper, test_loader)
+
     else:
         raise ValueError(f"Unknown model type: {args.model_type}")
 
