@@ -31,7 +31,7 @@ warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
 
 def get_dataset(dataset_type, dir_path):
-    if dataset_type in ["KPI", "SMD"]:
+    if dataset_type in ["ASD", "SMD"]:
         return PickleDataset(dir_path, prefix=dataset_type)
     elif dataset_type in ["MSL", "SMAP"]:
         return PickleDataset(dir_path, indices=[dataset_type], prefix=dataset_type)
@@ -134,8 +134,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("Train Script")
     parser.add_argument("--data", type=str, default="./data/KPI",
                         help="root dir of data")
-    parser.add_argument("--dataset", type=str, default="KPI",
-                        help="dataset type(KPI, MSL, SMAP, SMD), default 'KPI'")
+    parser.add_argument("--dataset", type=str, default="SMD",
+                        help="dataset type(ASD, MSL, SMAP, SMD), default 'SMD'")
     parser.add_argument("-O", "--output", type=str, default="out", help="result dir")
     parser.add_argument("--seed", type=int, default=1234, help="random seed, default 1234")
     parser.add_argument("--hidden_dim", type=int, default=128,
