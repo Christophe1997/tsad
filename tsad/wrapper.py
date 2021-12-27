@@ -215,4 +215,4 @@ class DvaeLightningWrapper(pl.LightningModule):
 
     def criterion(self, x, anneling_factor):
         _, (recon, kld) = self.model(x)
-        return (recon + anneling_factor * kld) / x.shape[0]
+        return (recon + anneling_factor * kld) / (x.shape[0] * x.shape[1])
