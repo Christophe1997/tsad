@@ -17,11 +17,17 @@ from sklearn import metrics
 from tsad import utils
 from tsad.data import PickleDataset, PreparedData
 from tsad.config import Config
-from tsad.models.vae import VRNNPyro
-from tsad.models.dvae import VRNN
+from tsad.models.vae import VRNNPyro, RVAEPyro, SRNNPyro, OmniPyro, TransformerVAEPyro
+from tsad.models.dvae import VRNN, RVAE, SRNN, Omni, TransformerVAE
 from tsad.wrapper import DvaeLightningWrapper, PyroLightningWrapper
 
-models = [VRNN, VRNNPyro]
+models = [
+    VRNN, VRNNPyro,
+    RVAE, RVAEPyro,
+    SRNN, SRNNPyro,
+    Omni, OmniPyro,
+    TransformerVAE, TransformerVAEPyro
+]
 config = Config()
 logger = logging.getLogger("pytorch_lightning")
 logger.setLevel(logging.INFO)
@@ -61,7 +67,7 @@ def train(prepared_data, args):
 
     train_loader, valid_loader, test_loader = prepared_data.batchify(
         history_w=args.history_w,
-        predict_w=args.predict_w,
+        predict_w=0,
         batch_size=args.batch_size,
         overlap=True,
         shuffle=True,
@@ -69,9 +75,10 @@ def train(prepared_data, args):
         device=device)
 
     ckpt_rootdir = f"{args.output}/{prepared_data.data_id}_{args.model_type}/"
-
-    if args.with_pyro or args.model_type.endswith("pyro"):
+    model_type = None
+    if args.with_pyro:
         wrapper_cls = PyroLightningWrapper
+        model_type = f"{args.model_type}_pyro"
     else:
         wrapper_cls = DvaeLightningWrapper
 
@@ -79,9 +86,10 @@ def train(prepared_data, args):
         best_model_path = None
         if not args.test_only:
             trainer.gradient_clip_val = None
-            model_cls, model_params = config.load_config(args, **kwargs)
-            print(model_params)
+            model_cls, model_params = config.load_config(args, model_type=model_type, **kwargs)
             wrapper = wrapper_cls(model_cls, **model_params)
+            logger.info(f"Pyro: {isinstance(wrapper, PyroLightningWrapper)}")
+            logger.info(wrapper.model)
             wrapper.num_batches = len(train_loader)
             pyro.clear_param_store()
             trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
@@ -95,8 +103,7 @@ def train(prepared_data, args):
         return res
 
     scores = train_aux(n_features=prepared_data.n_features,
-                       feature_x=64, feature_z=32,  # default for rnn net
-                       nhead=8, nlayers=2, phi_dense=False, theta_dense=False  # default  for transformer net
+                       nhead=8, nlayers=2  # default  for transformer net
                        )
     anomaly_vect = prepared_data.test_anomaly[args.history_w - 1:]
     scores = scores.cpu().numpy()
@@ -155,11 +162,15 @@ if __name__ == "__main__":
     parser.add_argument("--gpu", type=int, default=-1, help="GPU device, if there is no gpu then use cpu")
     parser.add_argument("--z_dim", default=64, type=int, help="embedding dimension for autoencoder")
     parser.add_argument("--model_type", type=str, default="vrnn",
-                        help="model type('vrnn', 'vrnn_pyro')")
-    parser.add_argument("--dim_dense", type=int, default=512, help="dimension of transformer feedforward layer")
+                        help="model type('vrnn', 'omni', 'rvae', 'srnn', 'tfvae')")
+    parser.add_argument("--dense_dim", type=int, default=512, help="dimension of transformer feedforward layer")
     parser.add_argument("--no_progress_bar", dest="enable_progress_bar", action="store_false",
                         help="whether enable progress_bar")
     parser.add_argument("--test_only", action="store_true", help="test only")
+    parser.add_argument("--with_phi_dense", dest="phi_dense", action="store_true",
+                        help="add dense layers in inference net")
+    parser.add_argument("--with_theta_dense", dest="theta_dense", action="store_true",
+                        help="add dense layers in generation net")
     parser.add_argument("--with_pyro", action="store_true", help="use pyro for train")
 
     args_ = parser.parse_args()

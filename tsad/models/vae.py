@@ -6,10 +6,9 @@ from torch import nn
 
 from tsad.config import register
 from tsad.models import dvae
-from tsad.models.submodule import NormalParam, MLPEmbedding, Conv1DEmbedding, PositionalEncoding
 
 
-@register("vrnn_pyro", "n_features", "hidden_dim", "dropout", "feature_x", "feature_z", z_dim="emb_dim")
+@register("vrnn_pyro", "n_features", "hidden_dim", "z_dim", "dropout", "phi_dense", "theta_dense")
 class VRNNPyro(dvae.VRNN):
 
     def __init__(self, *args, **kwargs):
@@ -18,142 +17,155 @@ class VRNNPyro(dvae.VRNN):
     def model(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
         pyro.module("vrnn", self)
+
         h = x.new_zeros([b, self.hidden_dim])
 
-        feature_x = self.feature_extra_x(x)
         with pyro.plate("data", b):
             for t in range(1, l + 1):
-                z_loc, z_scale = self.theta_prior_z(h)
+                z_loc, z_scale = self.theta_p_z(h)
                 with poutine.scale(None, annealing_factor):
                     zt = pyro.sample(f"z_{t}", dist.Normal(z_loc, z_scale).to_event(1))
 
-                zt = self.feature_extra_z(zt)
                 x_loc, x_scale, x_dist = self.generate_x(zt, h)
                 pyro.sample(f"obs_{t}", x_dist, obs=x[:, t - 1, :])
-                h = self.recurrence(feature_x[:, t - 1, :], zt, h)
+                h = self.recurrence(x[:, t - 1, :], zt, h)
 
     def guide(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
         pyro.module("vrnn", self)
+
         h = x.new_zeros([b, self.hidden_dim])
 
-        feature_x = self.feature_extra_x(x)
         with pyro.plate("data", b):
             for t in range(1, l + 1):
-                xt = feature_x[:, t - 1, :]
+                xt = x[:, t - 1, :]
                 z_loc, z_scale, zdist = self.inference(xt, h)
                 with poutine.scale(None, annealing_factor):
                     zt = pyro.sample(f"z_{t}", zdist)
 
-                zt = self.feature_extra_z(zt)
                 h = self.recurrence(xt, zt, h)
 
 
-class RVAE(nn.Module):
-    """Original paper: A Recurrent Variational Autoencoder for Speech Enhancement (https://arxiv.org/abs/1910.10942)
+@register("omni_pyro", "n_features", "hidden_dim", "z_dim", "dropout", "phi_dense", "theta_dense")
+class OmniPyro(dvae.Omni):
 
-    It's an implementation based on pyro.
-    """
+    def __init__(self, *args, **kwargs):
+        super(OmniPyro, self).__init__(*args, **kwargs)
+        self.phi_nf = dist.transforms.spline(self.z_dim)
 
-    def __init__(self, n_features=1, hidden_dim=256, z_dim=4, dropout=0.1, feature_x=64, feature_z=32, n_sample=1):
-        super(RVAE, self).__init__()
-        self.z_dim = z_dim
-        self.hidden_dim = hidden_dim
-        self.n_sample = n_sample
+    def model(self, x, annealing_factor=1.0):
+        b, l, _ = x.shape
+        pyro.module("omni", self)
 
-        # embedding
-        if feature_x is None:
-            self.dim_feature_x = n_features
-            self.feature_extra_x = nn.Identity()
-        else:
-            self.dim_feature_x = feature_x
-            self.feature_extra_x = MLPEmbedding(n_features, feature_x, dropout=dropout)
+        h = x.new_zeros([b, self.hidden_dim])
+        zt_loc, zt_scale = x.new_zeros([b, self.z_dim]), x.new_ones([b, self.z_dim])
 
-        if feature_z is None:
-            self.dim_feature_z = z_dim
-            self.feature_extra_z = nn.Identity()
-        else:
-            self.dim_feature_z = feature_z
-            self.feature_extra_z = MLPEmbedding(z_dim, feature_z, [self.dim_feature_z // 2], dropout=dropout)
+        with pyro.plate("data", b):
+            for t in range(l + 1):
+                with poutine.scale(None, annealing_factor):
+                    zt = pyro.sample(f"z_{t}", dist.Normal(zt_loc, zt_scale).to_event(1))
+                h = self.theta_rnn(zt, h)
+                x_loc, x_scale, x_dist = self.generate_x(h)
+                pyro.sample(f"obs_{t}", x_dist, obs=x[:, t - 1, :])
+                zt_loc = zt
 
-        # generation
-        self.theta_rnn = nn.GRU(self.dim_feature_z, hidden_dim, batch_first=True)
-        self.theta_norm = NormalParam(hidden_dim, n_features)
+    def guide(self, x, annealing_factor=1.0):
+        b, l, _ = x.shape
+        pyro.module("omni", self)
 
-        # inference
-        self.phi_rnn_1 = nn.GRU(self.dim_feature_x, hidden_dim, batch_first=True)
-        self.phi_rnn_2 = nn.GRUCell(self.dim_feature_z, hidden_dim)
-        self.phi_norm = NormalParam(hidden_dim + hidden_dim, z_dim)
+        h = x.new_zeros([b, self.hidden_dim])
+        zt = x.new_zeros([b, self.z_dim])
+
+        with pyro.plate("data", b):
+            for t in range(l + 1):
+                xt = x[:, t - 1, :]
+                h = self.phi_rnn(xt, h)
+                zt_loc, zt_scale, zt_dist = self.inference(h, zt)
+                zt_dist_tf = dist.TransformedDistribution(zt_dist, [self.phi_nf])
+                with poutine.scale(None, annealing_factor):
+                    zt = pyro.sample(f"z_{t}", zt_dist_tf)
+
+
+@register("rvae_pyro", "n_features", "hidden_dim", "z_dim", "dropout", "phi_dense", "theta_dense")
+class RVAEPyro(dvae.RVAE):
 
     def model(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
         pyro.module("rvae", self)
+
         prior_z = dist.Normal(x.new_zeros([b, self.z_dim]), x.new_ones([b, self.z_dim])).to_event(1)
-        h = x.new_zeros([1, b, self.hidden_dim])
+        h = x.new_zeros([b, self.hidden_dim])
+
         with pyro.plate("data", b):
             for t in range(1, l + 1):
                 with poutine.scale(None, annealing_factor):
-                    z_t = pyro.sample(f"z_{t}", prior_z)
-                z_t = self.feature_extra_z(z_t)
-                _, h = self.theta_rnn(z_t.unsqueeze(1), h)
-                x_loc, x_scale = self.theta_norm(h.squeeze())
-                pyro.sample(f"obs_{t}", dist.Normal(x_loc, x_scale).to_event(1), obs=x[:, t - 1, :])
+                    zt = pyro.sample(f"z_{t}", prior_z)
+                h = self.theta_rnn(zt, h)
+                x_loc, x_scale, x_dist = self.generate_x(h)
+                pyro.sample(f"obs_{t}", x_dist, obs=x[:, t - 1, :])
 
     def guide(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
         pyro.module("rvae", self)
-        x = self.feature_extra_x(x)
+
         x_reverse = torch.flip(x, [1])
         xh, _ = self.phi_rnn_1(x_reverse)
         xh_r = torch.flip(xh, [1])
         zh = x.new_zeros([b, self.hidden_dim])
-        z_t = x.new_zeros([b, self.dim_feature_z])
+        zt = x.new_zeros([b, self.z_dim])
+
         with pyro.plate("data", b):
             for t in range(1, l + 1):
-                zh = self.phi_rnn_2(z_t, zh)
-                zh_with_xh_r = torch.cat([zh, xh_r[:, t - 1, :]], dim=1)
-                z_loc, z_scale = self.phi_norm(zh_with_xh_r)
+                zh = self.phi_rnn_2(zt, zh)
+                zt_loc, zt_scale, zt_dist = self.inference(zh, xh_r[:, t - 1, :])
                 with poutine.scale(None, annealing_factor):
-                    z_t = pyro.sample(f"z_{t}", dist.Normal(z_loc, z_scale).to_event(1))
-                z_t = self.feature_extra_z(z_t)
+                    zt = pyro.sample(f"z_{t}", zt_dist)
 
-    def encode(self, x):
+
+@register("srnn_pyro", "n_features", "hidden_dim", "z_dim", "dropout", "phi_dense", "theta_dense")
+class SRNNPyro(dvae.SRNN):
+
+    def __init__(self, *args, **kwargs):
+        super(SRNNPyro, self).__init__(*args, **kwargs)
+
+    def model(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
-        x = self.feature_extra_x(x)
-        x_reverse = torch.flip(x, [1])
-        xh, _ = self.phi_rnn_1(x_reverse)
-        xh_r = torch.flip(xh, [1])
-        zh = x.new_zeros([b, self.hidden_dim])
-        z = x.new_zeros([b, l, self.z_dim])
-        z_t = x.new_zeros([b, self.dim_feature_z])
+        pyro.module("srnn", self)
 
-        for t in range(l):
-            zh = self.phi_rnn_2(z_t, zh)
-            zh_with_xh_r = torch.cat([zh, xh_r[:, t, :]], dim=1)
-            z_loc, z_scale = self.phi_norm(zh_with_xh_r)
-            z_t = dist.Normal(z_loc, z_scale).to_event(1).rsample([self.n_sample])
-            z_t = z_t.mean(dim=0)
-            z[:, t, :] = z_t
-            z_t = self.feature_extra_z(z_t)
+        h, _ = self.phi_rnn_1(dvae.lag(x))
+        zt = x.new_zeros([b, self.z_dim])
 
-        return z
+        with pyro.plate("data", b):
+            for t in range(1, l + 1):
+                ht = h[:, t - 1, :]
+                zt_loc, zt_scale, zt_dist = self.generate_z(ht, zt)
+                with poutine.scale(None, annealing_factor):
+                    zt = pyro.sample(f"z_{t}", zt_dist)
+                x_loc, x_scale, x_dist = self.generate_x(zt, ht)
+                pyro.sample(f"obs_{t}", x_dist, obs=x[:, t - 1, :])
 
-    def decode(self, z):
-        b, l, _ = z.shape
-        z = self.feature_extra_z(z)
-        h, _ = self.theta_rnn(z)
-        x_loc, x_scale = self.theta_norm(h)
-        return x_loc, x_scale
+    def guide(self, x, annealing_factor=1.0):
+        b, l, _ = x.shape
+        pyro.module("srnn", self)
 
-    def forward(self, x, return_prob=False):
-        z = self.encode(x)
-        x_loc, x_scale = self.decode(z)
-        return x_loc if not return_prob else (x_loc, x_scale)
+        h, _ = self.phi_rnn_1(dvae.lag(x))
+        x_with_h = torch.cat([x, h], dim=-1)
+        h, _ = self.phi_rnn_2(torch.flip(x_with_h, [1]))
+        h = torch.flip(h, [1])
+        zt = x.new_zeros([b, self.z_dim])
+
+        with pyro.plate("data", b):
+            for t in range(1, l + 1):
+                zt_with_h = torch.cat([zt, h[:, t - 1, :]], dim=-1)
+                zt_with_h = self.phi_dense(zt_with_h)
+                zt_loc, zt_scale, zt_dist = self.phi_p_z_x(zt_with_h, return_dist=True)
+                with poutine.scale(None, annealing_factor):
+                    zt = pyro.sample(f"z_{t}", zt_dist)
 
 
-@register("tfvae", "n_features", "z_dim", "nhead", "nlayers", "phi_dense", "theta_dense",
+@register("tfvae_pyro", "n_features", "z_dim", "nhead", "nlayers", "phi_dense", "theta_dense",
           d_model="hidden_dim",
-          dim_feedforward="dim_dense")
+          dim_feedforward="dense_dim")
 class TransformerVAEPyro(dvae.TransformerVAE):
 
     def __init__(self, *args, **kwargs):
@@ -162,22 +174,24 @@ class TransformerVAEPyro(dvae.TransformerVAE):
     def model(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
         pyro.module("tfvae", self)
-        x_lag = dvae.lag(x)
-        h = self.encode(x_lag)
+
+        h = self.encode(dvae.lag(x))
         h = self.theta_dense(h)
         zt = x.new_zeros([b, self.z_dim])
 
         with pyro.plate("data", b):
             for t in range(1, l + 1):
                 ht = h[:, t - 1, :]
-                zt_loc, zt_scale = self.generate_z(ht, zt)
+                zt_loc, zt_scale, zt_dist = self.generate_z(ht, zt)
                 with poutine.scale(None, annealing_factor):
-                    zt = pyro.sample(f"z_{t}", dist.Normal(zt_loc, zt_scale).to_event(1))
-                x_loc, x_scale = self.generate_x(zt, ht)
-                pyro.sample(f"obs_{t}", dist.Normal(x_loc, x_scale).to_event(1))
+                    zt = pyro.sample(f"z_{t}", zt_dist)
+                x_loc, x_scale, x_dist = self.generate_x(zt, ht)
+                pyro.sample(f"obs_{t}", x_dist, obs=x[:, t - 1, :])
 
     def guide(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
+        pyro.module("tfvae", self)
+
         h = self.encode(x)
         h = self.phi_dense(h)
         zt = x.new_zeros([b, self.z_dim])
@@ -185,6 +199,6 @@ class TransformerVAEPyro(dvae.TransformerVAE):
         with pyro.plate("data", b):
             for t in range(1, l + 1):
                 zt_with_h = torch.cat([zt, h[:, t - 1, :]], dim=-1)
-                zt_loc, zt_scale = self.phi_p_z_x(zt_with_h)
+                zt_loc, zt_scale, zt_dist = self.phi_p_z_x(zt_with_h, return_dist=True)
                 with poutine.scale(None, annealing_factor):
-                    zt = pyro.sample(f"z_{t}", dist.Normal(zt_loc, zt_scale).to_event(1))
+                    zt = pyro.sample(f"z_{t}", zt_dist)
