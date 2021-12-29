@@ -99,24 +99,35 @@ def train(prepared_data, args):
             best_model_path = utils.get_last_ckpt(ckpt_rootdir)
         wrapper = wrapper_cls.load_from_checkpoint(best_model_path)
         wrapper.model = wrapper.model.to(device)
-        res = utils.get_score(wrapper, test_loader)
-        return res
+        y_score, y_loc, y_scale = utils.get_score(wrapper, test_loader, n_sample=10)
+        return y_score, y_loc, y_scale
 
-    scores = train_aux(n_features=prepared_data.n_features,
-                       nhead=8, nlayers=2  # default  for transformer net
-                       )
+    scores, y_locs, y_scales = train_aux(n_features=prepared_data.n_features,
+                                         nhead=8, nlayers=2  # default  for transformer net
+                                         )
     anomaly_vect = prepared_data.test_anomaly[args.history_w - 1:]
     scores = scores.cpu().numpy()
+    y_locs = utils.reconstruct(y_locs.cpu().numpy())
+    y_scales = utils.reconstruct(y_scales.cpu().numpy())
 
-    last_version = sorted(os.listdir(ckpt_rootdir))[-1]
-    with open(os.path.join(ckpt_rootdir, f"{last_version}_test_score.pkl"), "wb") as f:
+    last_version = utils.get_last_version(ckpt_rootdir)
+    with open(os.path.join(ckpt_rootdir, f"{last_version}/test_score.pkl"), "wb") as f:
         pickle.dump(scores, f)
+    with open(os.path.join(ckpt_rootdir, f"{last_version}/test_mean.pkl"), "wb") as f:
+        pickle.dump(y_locs, f)
+    with open(os.path.join(ckpt_rootdir, f"{last_version}/test_std.pkl"), "wb") as f:
+        pickle.dump(y_scales, f)
 
     fpr, tpr, thresholds = metrics.roc_curve(y_true=anomaly_vect, y_score=scores)
     roc_auc = metrics.auc(fpr, tpr)
     if not args.test_only:
         tb_logger.log_metrics({"hp_metric": roc_auc})
-    logger.info(f"ROC auc = {roc_auc:.3f} on {prepared_data.data_id} with {args.model_type}")
+
+    non_anomaly_indices = np.where(prepared_data.test_anomaly != 1)
+    rmse = metrics.mean_squared_error(prepared_data.test[non_anomaly_indices], y_locs[non_anomaly_indices],
+                                      squared=False)
+    logger.info(
+        f"RMSE(with mean val) = {rmse:.3f} ROC auc = {roc_auc:.3f} on {prepared_data.data_id} with {args.model_type}")
 
 
 # noinspection PyBroadException

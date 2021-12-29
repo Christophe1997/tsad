@@ -161,12 +161,17 @@ def relative_intervals(intervals, inf=0):
 def get_score(wrapper, dataloader, **kwargs):
     wrapper.model.eval()
     with torch.no_grad():
-        scores = wrapper(dataloader, **kwargs)
-    return scores
+        scores, y_locs, y_scales = wrapper(dataloader, **kwargs)
+    return scores, y_locs, y_scales
 
 
-def get_last_ckpt(root):
-    last_version = sorted(os.listdir(root))[-1]
-    root = os.path.join(root, last_version, "checkpoints")
+def get_last_version(root):
+    return sorted(f for f in os.listdir(root) if not f.endswith(".pkl"))[-1]
+
+
+def get_last_ckpt(root, version=None):
+    if version is None:
+        version = get_last_version(root)
+    root = os.path.join(root, version, "checkpoints")
     ckpt_path = os.path.join(root, os.listdir(root)[0])
     return ckpt_path

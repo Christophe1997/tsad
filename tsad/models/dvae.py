@@ -76,7 +76,7 @@ class VRNN(nn.Module):
         h = self.phi_rnn(feature_x_with_z, h)
         return h
 
-    def forward(self, x, return_prob=False, return_loss=True):
+    def forward(self, x, return_prob=False, return_loss=True, n_sample=1):
         batch_size, seq_len, _ = x.shape
         y_loc = x.new_zeros([batch_size, seq_len, self.n_features])
         y_scale = x.new_zeros([batch_size, seq_len, self.n_features])
@@ -89,7 +89,7 @@ class VRNN(nn.Module):
             xt = x[:, t, :]
             zt_loc_prior, zt_scale_prior, zt_prior_dist = self.theta_p_z(ht, return_dist=True)
             zt_loc, zt_scale, zt_dist = self.inference(xt, ht)
-            zt = zt_dist.rsample()
+            zt = zt_dist.rsample([n_sample]).mean(0)
             yt_loc, yt_scale, yt_dist = self.generate_x(zt, ht)
 
             recon += -yt_dist.log_prob(x[:, t, :]).sum()
@@ -145,7 +145,7 @@ class Omni(nn.Module):
         z_loc, z_scale = z_prev, torch.ones_like(z_prev)
         return z_loc, z_scale, dist.Normal(z_loc, z_scale).to_event(1)
 
-    def forward(self, x, return_prob=False, return_loss=True):
+    def forward(self, x, return_prob=False, return_loss=True, n_sample=1):
         b, l, _ = x.shape
         phi_h = x.new_zeros([b, self.hidden_dim])
         theta_h = x.new_zeros([b, self.hidden_dim])
@@ -160,7 +160,7 @@ class Omni(nn.Module):
             xt = x[:, t, :]
             phi_h = self.phi_rnn(xt, phi_h)
             _, _, zt_dist = self.inference(phi_h, zt)
-            zt = zt_dist.rsample()
+            zt = zt_dist.rsample([n_sample]).mean(0)
             theta_h = self.theta_rnn(zt, theta_h)
             yt_loc, yt_scale, yt_dist = self.generate_x(theta_h)
             y_loc[:, t, :] = yt_loc
@@ -213,7 +213,7 @@ class RVAE(nn.Module):
         x_loc, x_scale, x_dist = self.theta_p_x_z(h, return_dist=True)
         return x_loc, x_scale, x_dist
 
-    def forward(self, x, return_prob=False, return_loss=True):
+    def forward(self, x, return_prob=False, return_loss=True, n_sample=1):
         b, l, _ = x.shape
         phi_zh = x.new_zeros([b, self.hidden_dim])
         theta_zh = x.new_zeros([b, self.hidden_dim])
@@ -232,7 +232,7 @@ class RVAE(nn.Module):
         for t in range(l):
             phi_zh = self.phi_rnn_2(zt, phi_zh)
             z_loc, z_scale, z_dist = self.inference(phi_zh, xh_r[:, t, :])
-            zt = z_dist.rsample()
+            zt = z_dist.rsample([n_sample]).mean(0)
             theta_zh = self.theta_rnn(zt, theta_zh)
             yt_loc, yt_scale, yt_dist = self.generate_x(theta_zh)
 
@@ -275,7 +275,7 @@ class SRNN(nn.Module):
         else:
             self.theta_dense = nn.Identity()
 
-    def inference(self, x, h):
+    def inference(self, x, h, n_sample=1):
         b, l, _ = x.shape
         z_loc = x.new_zeros([b, l, self.z_dim])
         z_scale = x.new_zeros([b, l, self.z_dim])
@@ -290,7 +290,7 @@ class SRNN(nn.Module):
             zt_with_h = torch.cat([zt, h[:, t, :]], dim=-1)
             zt_with_h = self.phi_dense(zt_with_h)
             zt_loc, zt_scale, zt_dist = self.phi_p_z_x(zt_with_h, return_dist=True)
-            zt = zt_dist.rsample()
+            zt = zt_dist.rsample([n_sample]).mean(0)
 
             z_loc[:, t, :] = zt_loc
             z_scale[:, t, :] = zt_scale
@@ -309,10 +309,10 @@ class SRNN(nn.Module):
         z_loc, z_scale, z_dist = self.theta_p_z(z_with_h, return_dist=True)
         return z_loc, z_scale, z_dist
 
-    def forward(self, x, return_prob=False, return_loss=True):
+    def forward(self, x, return_prob=False, return_loss=True, n_sample=1):
         b, l, _ = x.shape
         h, _ = self.phi_rnn_1(lag(x))
-        z_loc, z_scale, z = self.inference(x, h)
+        z_loc, z_scale, z = self.inference(x, h, n_sample=n_sample)
         z_dist = dist.Normal(z_loc, z_scale).to_event(1)
         y_loc, y_scale, y_dist = self.generate_x(z, h)
         z_prior_loc, z_prior_scale, z_dist_prior = self.generate_z(h, lag(z))
@@ -361,7 +361,7 @@ class TransformerVAE(nn.Module):
         mask = torch.triu(x.new_full((x.size(1), x.size(1)), float('-inf')), diagonal=1)
         return self.phi_transformer_encoder(embedding, mask=mask)
 
-    def inference(self, x):
+    def inference(self, x, n_sample=1):
         b, l, _ = x.shape
         h = self.encode(x)
         h = self.phi_dense(h)
@@ -372,7 +372,7 @@ class TransformerVAE(nn.Module):
         for t in range(l):
             zt_with_h = torch.cat([zt, h[:, t, :]], dim=-1)
             zt_loc, zt_scale, zt_dist = self.phi_p_z_x(zt_with_h, return_dist=True)
-            zt = zt_dist.rsample()
+            zt = zt_dist.rsample([n_sample]).mean(0)
 
             z_loc[:, t, :] = zt_loc
             z_scale[:, t, :] = zt_scale
@@ -390,10 +390,10 @@ class TransformerVAE(nn.Module):
         x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_h, return_dist=True)
         return x_loc, x_scale, x_dist
 
-    def forward(self, x, return_prob=False, return_loss=True):
+    def forward(self, x, return_prob=False, return_loss=True, n_sample=1):
         b, l, _ = x.shape
 
-        z_loc, z_scale, z = self.inference(x)
+        z_loc, z_scale, z = self.inference(x, n_sample=n_sample)
         z_dist = dist.Normal(z_loc, z_scale).to_event(1)
 
         h = self.encode(lag(x))

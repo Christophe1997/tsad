@@ -7,6 +7,7 @@ from torch import optim
 from torch.nn import functional
 
 from tsad.detector import GaussianDetector
+from tsad import utils
 
 
 # noinspection PyAbstractClass
@@ -88,10 +89,14 @@ class PyroLightningWrapper(pl.LightningModule):
         else:
             return 1.0
 
-    def forward(self, dataloader, last_only=True):
+    def forward(self, dataloader, last_only=True, n_sample=1):
         scores = []
+        y_locs = []
+        y_scales = []
         for x, _ in dataloader:
-            y_loc, y_scale = self.model(x, return_prob=True)
+            y_loc, y_scale = self.model(x, return_prob=True, return_loss=False, n_sample=n_sample)
+            y_locs.append(y_loc)
+            y_scales.append(y_scale)
             if last_only:
                 yt_loc, yt_scale = y_loc[:, -1, :], y_scale[:, -1, :]
                 xt = x[:, -1, :]
@@ -101,7 +106,7 @@ class PyroLightningWrapper(pl.LightningModule):
                 d = dist.Normal(y_loc, y_scale).to_event(1)
                 scores.append(-d.log_prob(x))
 
-        return torch.cat(scores)
+        return torch.cat(scores), torch.cat(y_locs), torch.cat(y_scales)
 
     def training_step(self, batch, batch_idx):
         x, _ = batch
@@ -143,7 +148,7 @@ class PyroLightningWrapper(pl.LightningModule):
                 "betas": (0.95, 0.999),
                 "clip_norm": 10,
                 "lrd": 0.99996,
-                "weight_decay": 1e-2}),
+                "weight_decay": 1}),
             loss=loss)
 
         return svi
@@ -169,10 +174,14 @@ class DvaeLightningWrapper(pl.LightningModule):
         else:
             return 1.0
 
-    def forward(self, dataloader, last_only=True):
+    def forward(self, dataloader, last_only=True, n_sample=1):
         scores = []
+        y_locs = []
+        y_scales = []
         for x, _ in dataloader:
-            y_loc, y_scale = self.model(x, return_prob=True, return_loss=False)
+            y_loc, y_scale = self.model(x, return_prob=True, return_loss=False, n_sample=n_sample)
+            y_locs.append(y_loc)
+            y_scales.append(y_scale)
 
             if last_only:
                 yt_loc, yt_scale = y_loc[:, -1, :], y_scale[:, -1, :]
@@ -183,7 +192,7 @@ class DvaeLightningWrapper(pl.LightningModule):
                 d = dist.Normal(y_loc, y_scale).to_event(1)
                 scores.append(-d.log_prob(x))
 
-        return torch.cat(scores)
+        return torch.cat(scores), torch.cat(y_locs), torch.cat(y_scales)
 
     def training_step(self, batch, batch_idx):
         x, _ = batch
