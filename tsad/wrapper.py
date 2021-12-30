@@ -89,11 +89,12 @@ class PyroLightningWrapper(pl.LightningModule):
         else:
             return 1.0
 
-    def forward(self, dataloader, last_only=True, n_sample=1):
+    def forward(self, dataloader, last_only=True, n_sample=1, device=torch.device("cpu")):
         scores = []
         y_locs = []
         y_scales = []
         for x, _ in dataloader:
+            x = x.to(device)
             y_loc, y_scale = self.model(x, return_prob=True, return_loss=False, n_sample=n_sample)
             y_locs.append(y_loc)
             y_scales.append(y_scale)
@@ -174,11 +175,12 @@ class DvaeLightningWrapper(pl.LightningModule):
         else:
             return 1.0
 
-    def forward(self, dataloader, last_only=True, n_sample=1):
+    def forward(self, dataloader, last_only=True, n_sample=1, device=torch.device("cpu")):
         scores = []
         y_locs = []
         y_scales = []
         for x, _ in dataloader:
+            x = x.to(device)
             y_loc, y_scale = self.model(x, return_prob=True, return_loss=False, n_sample=n_sample)
             y_locs.append(y_loc)
             y_scales.append(y_scale)

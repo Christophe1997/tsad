@@ -163,7 +163,7 @@ class SRNNPyro(dvae.SRNN):
                     zt = pyro.sample(f"z_{t}", zt_dist)
 
 
-@register("tfvae_pyro", "n_features", "z_dim", "nhead", "nlayers", "phi_dense", "theta_dense",
+@register("tfvae_pyro", "n_features", "z_dim", "nhead", "nlayers", "phi_dense", "theta_dense", "dropout",
           d_model="hidden_dim",
           dim_feedforward="dense_dim")
 class TransformerVAEPyro(dvae.TransformerVAE):

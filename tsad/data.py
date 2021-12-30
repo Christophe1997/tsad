@@ -208,17 +208,18 @@ class PreparedData:
                  overlap=False,
                  shuffle=True,
                  test_batch_size=None,
-                 device=torch.device("cpu")):
+                 device=torch.device("cpu"),
+                 num_workers=0):
         if test_batch_size is None:
             test_batch_size = batch_size
 
         train_sw = SlidingWindowDataset(self.train, history_w, predict_w, overlap, device=device)
-        train_loader = DataLoader(train_sw, batch_size=batch_size, shuffle=shuffle)
+        train_loader = DataLoader(train_sw, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
 
         valid_sw = SlidingWindowDataset(self.valid, history_w, predict_w, overlap, device=device)
-        valid_loader = DataLoader(valid_sw, batch_size=batch_size, shuffle=False)
+        valid_loader = DataLoader(valid_sw, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
         test_sw = SlidingWindowDataset(self.test, history_w, predict_w, overlap, device=device)
-        test_loader = DataLoader(test_sw, batch_size=test_batch_size, shuffle=False)
+        test_loader = DataLoader(test_sw, batch_size=test_batch_size, shuffle=False, num_workers=num_workers)
 
         return train_loader, valid_loader, test_loader

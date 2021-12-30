@@ -324,7 +324,7 @@ class SRNN(nn.Module):
         return first_term if not return_loss else (first_term, (recon, kld))
 
 
-@register("tfvae", "n_features", "z_dim", "nhead", "nlayers", "phi_dense", "theta_dense",
+@register("tfvae", "n_features", "z_dim", "nhead", "nlayers", "phi_dense", "theta_dense", "dropout",
           d_model="hidden_dim",
           dim_feedforward="dense_dim")
 class TransformerVAE(nn.Module):

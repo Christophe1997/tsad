@@ -72,7 +72,7 @@ def train(prepared_data, args):
         overlap=True,
         shuffle=True,
         test_batch_size=None,
-        device=device)
+        num_workers=args.num_workers)
 
     ckpt_rootdir = f"{args.output}/{prepared_data.data_id}_{args.model_type}/"
     model_type = None
@@ -99,7 +99,7 @@ def train(prepared_data, args):
             best_model_path = utils.get_last_ckpt(ckpt_rootdir)
         wrapper = wrapper_cls.load_from_checkpoint(best_model_path)
         wrapper.model = wrapper.model.to(device)
-        y_score, y_loc, y_scale = utils.get_score(wrapper, test_loader, n_sample=10)
+        y_score, y_loc, y_scale = utils.get_score(wrapper, test_loader, n_sample=10, device=device)
         return y_score, y_loc, y_scale
 
     scores, y_locs, y_scales = train_aux(n_features=prepared_data.n_features,
@@ -183,6 +183,7 @@ if __name__ == "__main__":
     parser.add_argument("--with_theta_dense", dest="theta_dense", action="store_true",
                         help="add dense layers in generation net")
     parser.add_argument("--with_pyro", action="store_true", help="use pyro for train")
+    parser.add_argument("--num_workers", type=int, default=0, help="dataload num_worker setting")
 
     args_ = parser.parse_args()
     # noinspection PyBroadException
