@@ -56,13 +56,12 @@ def train(prepared_data, args):
     else:
         gpus = 0
     trainer = pl.Trainer(
-        min_epochs=20,
+        min_epochs=args.min_epochs,
         max_epochs=args.epochs,
         logger=tb_logger,
         callbacks=[early_stop_callback, checkpoint_callback],
         gpus=gpus,
-        gradient_clip_val=10,
-        deterministic=True,
+        gradient_clip_val=args.clip,
         enable_progress_bar=args.enable_progress_bar)
 
     train_loader, valid_loader, test_loader = prepared_data.batchify(
@@ -79,19 +78,19 @@ def train(prepared_data, args):
     if args.with_pyro:
         wrapper_cls = PyroLightningWrapper
         model_type = f"{args.model_type}_pyro"
+        trainer.gradient_clip_val = None
+        pyro.clear_param_store()
     else:
         wrapper_cls = DvaeLightningWrapper
 
     def train_aux(**kwargs):
         best_model_path = None
         if not args.test_only:
-            trainer.gradient_clip_val = None
             model_cls, model_params = config.load_config(args, model_type=model_type, **kwargs)
             wrapper = wrapper_cls(model_cls, **model_params)
             logger.info(f"Pyro: {isinstance(wrapper, PyroLightningWrapper)}")
             logger.info(wrapper.model)
             wrapper.num_batches = len(train_loader)
-            pyro.clear_param_store()
             trainer.fit(wrapper, train_dataloaders=train_loader, val_dataloaders=valid_loader)
             best_model_path = checkpoint_callback.best_model_path
 
@@ -141,6 +140,7 @@ def main(args):
 
     if args.one_file is not None:
         prepared_data = PreparedData(*dataset.load_one(args.one_file), valid_prop=args.valid_prop)
+
         train(prepared_data, args)
     else:
         for item in dataset:
@@ -184,6 +184,8 @@ if __name__ == "__main__":
                         help="add dense layers in generation net")
     parser.add_argument("--with_pyro", action="store_true", help="use pyro for train")
     parser.add_argument("--num_workers", type=int, default=0, help="dataload num_worker setting")
+    parser.add_argument("--min_epochs", type=int, default=20, help="min epochs")
+    parser.add_argument("--clip", type=float, default=10, help="gradient clip")
 
     args_ = parser.parse_args()
     # noinspection PyBroadException

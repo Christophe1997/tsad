@@ -82,7 +82,7 @@ class PyroLightningWrapper(pl.LightningModule):
         self.epoch_idx = 0
         self.num_batches = None
 
-    def get_anneling_factor(self, batch_idx):
+    def get_annealing_factor(self, batch_idx):
         if self.epoch_idx < self.annealing_epochs and self.num_batches is not None:
             return self.min_annealing_factor + (1 - self.min_annealing_factor) * (
                     (batch_idx + 1 + self.epoch_idx * self.num_batches) / (self.annealing_epochs * self.num_batches))
@@ -113,12 +113,12 @@ class PyroLightningWrapper(pl.LightningModule):
         x, _ = batch
         b, l, _ = x.shape
         optimizer = self.optimizers(use_pl_optimizer=False)
-        loss = optimizer.step(x, annealing_factor=self.get_anneling_factor(batch_idx))
+        loss = optimizer.step(x, annealing_factor=self.get_annealing_factor(batch_idx))
         loss = loss / (b * l)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
     def training_epoch_end(self, outputs) -> None:
-        self.epoch_idx += 1
+        self.epoch_idx = (self.epoch_idx + 1) % (self.annealing_epochs + self.annealing_epochs // 2)
 
     def validation_step(self, batch, batch_idx):
         x, _ = batch
@@ -168,7 +168,7 @@ class DvaeLightningWrapper(pl.LightningModule):
         self.epoch_idx = 0
         self.num_batches = None
 
-    def get_anneling_factor(self, batch_idx):
+    def get_annealing_factor(self, batch_idx):
         if self.epoch_idx < self.annealing_epochs and self.num_batches is not None:
             return self.min_annealing_factor + (1 - self.min_annealing_factor) * (
                     (batch_idx + 1 + self.epoch_idx * self.num_batches) / (self.annealing_epochs * self.num_batches))
@@ -199,31 +199,36 @@ class DvaeLightningWrapper(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, _ = batch
         b, l, _ = x.shape
-        anneling_factor = self.get_anneling_factor(batch_idx)
-        loss = self.criterion(x, anneling_factor)
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        annealing_factor = self.get_annealing_factor(batch_idx)
+        recon, kld, loss = self.criterion(x, annealing_factor)
+        self.log("af", annealing_factor)
+        self.log("recon", recon / l)
+        self.log("kld", kld / l)
+        self.log("train_loss", loss / l, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
+
+    def training_epoch_end(self, outputs) -> None:
+        self.epoch_idx = (self.epoch_idx + 1) % (self.annealing_epochs * 2)
 
     def validation_step(self, batch, batch_idx):
         x, _ = batch
         b, l, _ = x.shape
-        anneling_factor = self.get_anneling_factor(batch_idx)
-        loss = self.criterion(x, anneling_factor)
-        self.log("valid_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        _, _, loss = self.criterion(x, annealing_factor=1)
+        self.log("valid_loss", loss / l, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
     def test_step(self, batch, batch_idx):
         x, _ = batch
-        loss = self.criterion(x, anneling_factor=1)
-        return loss
+        _, _, loss = self.criterion(x, annealing_factor=1)
+        return loss / x.shape[1]
 
     def test_epoch_end(self, outputs) -> None:
         loss = torch.stack(outputs)
         self.log("test_loss", torch.mean(loss))
 
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=1e-3, weight_decay=2, betas=(0.95, 0.999))
+        optimizer = optim.AdamW(self.parameters(), lr=1e-3, weight_decay=0.01, betas=(0.95, 0.999))
         return optimizer
 
-    def criterion(self, x, anneling_factor):
+    def criterion(self, x, annealing_factor):
         _, (recon, kld) = self.model(x)
-        return (recon + anneling_factor * kld) / (x.shape[0] * x.shape[1])
+        return recon, kld, (recon + annealing_factor * kld) / x.shape[0]
