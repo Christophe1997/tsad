@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.preprocessing import MinMaxScaler
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 
 from tsad import utils
 
@@ -185,19 +185,15 @@ class PickleDataset(FileDataset):
 
 class PreparedData:
 
-    def __init__(self, data_id, train: np.ndarray, test: np.ndarray, anomaly_vect: np.ndarray, valid_prop=0.3):
+    def __init__(self, data_id, train: np.ndarray, test: np.ndarray, anomaly_vect: np.ndarray, ):
         self.data_id = data_id
         train = train.squeeze()
         self.n_features = 1 if len(train.shape) == 1 else train.shape[-1]
-        size = train.shape[0]
-        train_size = math.floor(size * (1 - valid_prop))
-        self.train = train[:train_size]
-        self.valid = train[train_size + 1:]
+        self.train = train
         self.test = test.squeeze()
         anomaly_vect = anomaly_vect.squeeze()
 
-        self.train_size = train_size
-        self.valid_size = size - train_size
+        self.train_size = len(train)
         self.test_size = self.test.shape[0]
 
         assert anomaly_vect.shape[0] == self.test_size, "anomaly size not match"
@@ -208,15 +204,18 @@ class PreparedData:
                  overlap=False,
                  shuffle=True,
                  test_batch_size=None,
+                 valid_prop=0.3,
                  device=torch.device("cpu"),
                  num_workers=0):
         if test_batch_size is None:
             test_batch_size = batch_size
 
-        train_sw = SlidingWindowDataset(self.train, history_w, predict_w, overlap, device=device)
-        train_loader = DataLoader(train_sw, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
+        sw = SlidingWindowDataset(self.train, history_w, predict_w, overlap, device=device)
+        size = len(sw)
+        valid_size = math.floor(size * valid_prop)
+        train_sw, valid_sw = random_split(sw, [size - valid_size, valid_size])
 
-        valid_sw = SlidingWindowDataset(self.valid, history_w, predict_w, overlap, device=device)
+        train_loader = DataLoader(train_sw, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
         valid_loader = DataLoader(valid_sw, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
         test_sw = SlidingWindowDataset(self.test, history_w, predict_w, overlap, device=device)

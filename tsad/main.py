@@ -71,6 +71,7 @@ def train(prepared_data, args):
         overlap=True,
         shuffle=True,
         test_batch_size=None,
+        valid_prop=args.valid_prop,
         num_workers=args.num_workers)
 
     ckpt_rootdir = f"{args.output}/{prepared_data.data_id}_{args.model_type}/"
@@ -139,12 +140,12 @@ def main(args):
     dataset = get_dataset(args.dataset, args.data)
 
     if args.one_file is not None:
-        prepared_data = PreparedData(*dataset.load_one(args.one_file), valid_prop=args.valid_prop)
+        prepared_data = PreparedData(*dataset.load_one(args.one_file))
 
         train(prepared_data, args)
     else:
         for item in dataset:
-            prepared_data = PreparedData(*item, valid_prop=args.valid_prop)
+            prepared_data = PreparedData(*item)
             train(prepared_data, args)
 
 
