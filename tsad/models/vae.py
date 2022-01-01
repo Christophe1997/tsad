@@ -176,7 +176,6 @@ class TransformerVAEPyro(dvae.TransformerVAE):
         pyro.module("tfvae", self)
 
         h = self.encode(dvae.lag(x))
-        h = self.theta_dense(h)
         zt = x.new_zeros([b, self.z_dim])
 
         with pyro.plate("data", b):
@@ -193,12 +192,12 @@ class TransformerVAEPyro(dvae.TransformerVAE):
         pyro.module("tfvae", self)
 
         h = self.encode(x)
-        h = self.phi_dense(h)
         zt = x.new_zeros([b, self.z_dim])
 
         with pyro.plate("data", b):
             for t in range(1, l + 1):
                 zt_with_h = torch.cat([zt, h[:, t - 1, :]], dim=-1)
+                zt_with_h = self.phi_dense(zt_with_h)
                 zt_loc, zt_scale, zt_dist = self.phi_p_z_x(zt_with_h, return_dist=True)
                 with poutine.scale(None, annealing_factor):
                     zt = pyro.sample(f"z_{t}", zt_dist)

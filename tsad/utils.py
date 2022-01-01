@@ -166,7 +166,7 @@ def get_score(wrapper, dataloader, **kwargs):
 
 
 def get_last_version(root):
-    return sorted(f for f in os.listdir(root) if os.path.isdir(f) and f.startswith("version"))[-1]
+    return sorted(f for f in os.listdir(root) if f.startswith("version"))[-1]
 
 
 def get_last_ckpt(root, version=None):

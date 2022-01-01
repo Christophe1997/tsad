@@ -32,7 +32,8 @@ class MLPEmbedding(nn.Module):
             hidden_layers = []
         layer_dims = [input_dim] + hidden_layers + [output_dim]
         for i in range(1, len(layer_dims)):
-            layers[f"linear_{i}"] = nn.Linear(layer_dims[i - 1], layer_dims[i])
+            layers[f"linear_{i}"] = nn.Linear(layer_dims[i - 1], layer_dims[i], bias=False)
+            layers[f"norm_{i}"] = nn.LayerNorm(layer_dims[i])
             layers[f"activate_{i}"] = activate
             layers[f"dropout_{i}"] = nn.Dropout(dropout)
 

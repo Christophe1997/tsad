@@ -339,10 +339,12 @@ class TransformerVAE(nn.Module):
         # inference, share the transformer encoder with generation
         self.phi_pos_encoder = PositionalEncoding(d_model, batch_first=True)
         self.phi_x_embedding = Conv1DEmbedding(n_features, d_model)
-        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True)
+        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
+                                                    norm_first=True)
         self.phi_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
         if phi_dense:
-            self.phi_dense = MLPEmbedding(d_model, d_model, dropout=dropout, activate=nn.ReLU())
+            self.phi_dense = MLPEmbedding(d_model + z_dim, d_model + z_dim, [d_model + z_dim], dropout=dropout,
+                                          activate=nn.ReLU())
         else:
             self.phi_dense = nn.Identity()
         self.phi_p_z_x = NormalParam(d_model + z_dim, z_dim)
@@ -352,7 +354,8 @@ class TransformerVAE(nn.Module):
         self.theta_p_z = NormalParam(d_model + z_dim, z_dim)
 
         if theta_dense:
-            self.theta_dense = MLPEmbedding(d_model, d_model, dropout=dropout, activate=nn.ReLU())
+            self.theta_dense = MLPEmbedding(d_model + z_dim, d_model + z_dim, [d_model + z_dim], dropout=dropout,
+                                            activate=nn.ReLU())
         else:
             self.theta_dense = nn.Identity()
 
@@ -364,13 +367,13 @@ class TransformerVAE(nn.Module):
     def inference(self, x, n_sample=1):
         b, l, _ = x.shape
         h = self.encode(x)
-        h = self.phi_dense(h)
         z_loc = x.new_zeros([b, l, self.z_dim])
         z_scale = x.new_zeros([b, l, self.z_dim])
         z = x.new_zeros([b, l, self.z_dim])
         zt = x.new_zeros([b, self.z_dim])
         for t in range(l):
             zt_with_h = torch.cat([zt, h[:, t, :]], dim=-1)
+            zt_with_h = self.phi_dense(zt_with_h)
             zt_loc, zt_scale, zt_dist = self.phi_p_z_x(zt_with_h, return_dist=True)
             zt = zt_dist.rsample([n_sample]).mean(0)
 
@@ -387,6 +390,7 @@ class TransformerVAE(nn.Module):
 
     def generate_x(self, z, h):
         z_with_h = torch.cat([z, h], dim=-1)
+        z_with_h = self.theta_dense(z_with_h)
         x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_h, return_dist=True)
         return x_loc, x_scale, x_dist
 
@@ -397,7 +401,6 @@ class TransformerVAE(nn.Module):
         z_dist = dist.Normal(z_loc, z_scale).to_event(1)
 
         h = self.encode(lag(x))
-        h = self.theta_dense(h)
         y_loc, y_scale, y_dist = self.generate_x(z, h)
 
         z_prior_loc, z_prior_scale, z_dist_prior = self.generate_z(h, lag(z))
