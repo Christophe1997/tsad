@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.preprocessing import MinMaxScaler
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader
 
 from tsad import utils
 
@@ -186,22 +186,42 @@ class PreparedData:
 
     def __init__(self, data_id, train: np.ndarray, test: np.ndarray, anomaly_vect: np.ndarray, valid_prop=0.3):
         self.data_id = data_id
-        train = MinMaxScaler().fit_transform(train.squeeze())
         self.n_features = 1 if len(train.shape) == 1 else train.shape[-1]
         size = train.shape[0]
-        train_size = int(size * (1 - valid_prop))
-        self.train = train[:train_size]
-        self.valid = train[train_size + 1:]
-        self.test = MinMaxScaler().fit_transform(test.squeeze())
-        anomaly_vect = anomaly_vect.squeeze()
+        valid_size = int(size * valid_prop)
+        self.train = train[:-valid_size]
+        self.valid = train[-valid_size:]
 
-        self.train_size = train_size
-        self.valid_size = size - train_size
+        self.test = test
+
+        self.train_size = size - valid_size
+        self.valid_size = valid_size
         self.test_size = self.test.shape[0]
+        self.test_anomaly = anomaly_vect.squeeze()
 
-        assert anomaly_vect.shape[0] == self.test_size, "anomaly size not match"
+        self.preprocess()
 
-        self.test_anomaly = anomaly_vect
+    def preprocess(self):
+        assert len(self.train.shape) == 2 and len(self.test.shape) == 2, "data should be 2D array"
+        assert self.test_anomaly.shape[0] == self.test_size, "anomaly size not match"
+
+        self.train = np.asarray(self.train, dtype=np.float32)
+        self.valid = np.asarray(self.valid, dtype=np.float32)
+        self.test = np.asarray(self.test, dtype=np.float32)
+
+        if np.any(sum(np.isnan(self.train)) != 0):
+            self.train = np.nan_to_num(self.train)
+
+        if np.any(sum(np.isnan(self.test)) != 0):
+            self.test = np.nan_to_num(self.test)
+
+        scaler = MinMaxScaler()
+        scaler.fit(self.train)
+        self.train = scaler.transform(self.train)
+        self.valid = scaler.transform(self.valid)
+        self.test = scaler.transform(self.test)
+        self.valid = np.clip(self.valid, a_min=-3.0, a_max=3.0)
+        self.test = np.clip(self.test, a_min=-3.0, a_max=3.0)
 
     def batchify(self, history_w, predict_w, batch_size,
                  overlap=False,

@@ -8,3 +8,4 @@ __pycache__
 .experiment/
 *.ipynb
 notebooks/
+results/
