@@ -37,12 +37,10 @@ warnings.filterwarnings("ignore", ".*does not have many workers.*")
 
 
 def get_dataset(dataset_type, dir_path):
-    if dataset_type in ["ASD", "SMD"]:
-        return PickleDataset(dir_path, prefix=dataset_type)
-    elif dataset_type in ["MSL", "SMAP"]:
+    if dataset_type in ["MSL", "SMAP"]:
         return PickleDataset(dir_path, indices=[dataset_type], prefix=dataset_type)
     else:
-        raise ValueError(f"Unknown dataset type: {dataset_type}")
+        return PickleDataset(dir_path, prefix=dataset_type)
 
 
 def train(prepared_data, args):
