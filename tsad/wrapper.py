@@ -7,7 +7,6 @@ from torch import optim
 from torch.nn import functional
 
 from tsad.detector import GaussianDetector
-from tsad import utils
 
 
 # noinspection PyAbstractClass
@@ -77,7 +76,7 @@ class PyroLightningWrapper(pl.LightningModule):
         self.automatic_optimization = False
         self.save_hyperparameters()
 
-        self.min_annealing_factor = 0.2
+        self.min_annealing_factor = 0.25
         self.annealing_epochs = 10
         self.epoch_idx = 0
         self.num_batches = None
@@ -149,7 +148,7 @@ class PyroLightningWrapper(pl.LightningModule):
                 "betas": (0.95, 0.999),
                 "clip_norm": 10,
                 "lrd": 0.99996,
-                "weight_decay": 0.01}),
+                "weight_decay": 1e-3}),
             loss=loss)
 
         return svi

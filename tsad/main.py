@@ -148,7 +148,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Train Script")
-    parser.add_argument("--data", type=str, default="./data/KPI",
+    parser.add_argument("--data", type=str, default="./data/SMD",
                         help="root dir of data")
     parser.add_argument("--dataset", type=str, default="SMD",
                         help="dataset type(ASD, MSL, SMAP, SMD), default 'SMD'")
@@ -165,11 +165,9 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=32, help="batch size, default 32")
     parser.add_argument("--epochs", type=int, default=100, help="epoch limit, default 100")
     parser.add_argument("--valid_prop", type=float, default=0.3, help="validation set prop, default 0.3")
-    parser.add_argument("--test_prop", type=float, default=0.5,
-                        help="test set prop(only work for some dataset), default 0.5")
     parser.add_argument("--one_file", type=str, default=None, help="only train on the specific data")
     parser.add_argument("--gpu", type=int, default=-1, help="GPU device, if there is no gpu then use cpu")
-    parser.add_argument("--z_dim", default=64, type=int, help="embedding dimension for autoencoder")
+    parser.add_argument("--z_dim", default=4, type=int, help="embedding dimension for autoencoder")
     parser.add_argument("--model_type", type=str, default="vrnn",
                         help="model type('vrnn', 'omni', 'rvae', 'srnn', 'tfvae')")
     parser.add_argument("--dense_dim", type=int, default=512, help="dimension of transformer feedforward layer")
