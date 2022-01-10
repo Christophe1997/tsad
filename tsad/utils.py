@@ -1,4 +1,5 @@
 import os
+import shutil
 
 import numpy as np
 import plotly.graph_objects as go
@@ -175,3 +176,21 @@ def get_last_ckpt(root, version=None):
     root = os.path.join(root, version, "checkpoints")
     ckpt_path = os.path.join(root, os.listdir(root)[0])
     return ckpt_path
+
+
+def copy_score_vector(root, dest):
+    if not os.path.exists(dest):
+        os.makedirs(dest)
+
+    dirs = os.listdir(root)
+    suffixes = set(e.split("_")[-1] for e in dirs)
+    for s in suffixes:
+        os.makedirs(os.path.join(dest, s), exist_ok=True)
+        targets = [e for e in dirs if e.endswith(s)]
+        for target in targets:
+            idx = target[4:-(len(s) + 1)]
+            version = get_last_version(os.path.join(root, target))
+            src = os.path.join(root, target, version, "test_score.pkl")
+            dst = os.path.join(dest, s, f"{idx}_test_score.pkl")
+            print(f"{src} -> {dst}")
+            shutil.copy2(src, dst)
