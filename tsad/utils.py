@@ -178,12 +178,15 @@ def get_last_ckpt(root, version=None):
     return ckpt_path
 
 
-def copy_score_vector(root, dest):
+def copy_score_vector(root, dest, suffixes=None):
     if not os.path.exists(dest):
         os.makedirs(dest)
 
     dirs = os.listdir(root)
-    suffixes = set(e.split("_")[-1] for e in dirs)
+    if suffixes is None:
+        suffixes = set(e.split("_")[-1] for e in dirs)
+    else:
+        suffixes = set(suffixes)
     for s in suffixes:
         os.makedirs(os.path.join(dest, s), exist_ok=True)
         targets = [e for e in dirs if e.endswith(s)]
