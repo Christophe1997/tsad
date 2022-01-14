@@ -193,4 +193,5 @@ def copy_score_vector(root, dest):
             src = os.path.join(root, target, version, "test_score.pkl")
             dst = os.path.join(dest, s, f"{idx}_test_score.pkl")
             print(f"{src} -> {dst}")
-            shutil.copy2(src, dst)
+            if os.path.exists(src):
+                shutil.copy2(src, dst)

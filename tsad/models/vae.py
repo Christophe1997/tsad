@@ -201,3 +201,32 @@ class TransformerVAEPyro(dvae.TransformerVAE):
                 zt_loc, zt_scale, zt_dist = self.phi_p_z_x(zt_with_h, return_dist=True)
                 with poutine.scale(None, annealing_factor):
                     zt = pyro.sample(f"z_{t}", zt_dist)
+
+
+@register("ntfvae_pyro", "n_features", "z_dim", "nhead", "nlayers", "theta_dense", "dropout",
+          d_model="hidden_dim",
+          dim_feedforward="dense_dim")
+class NaiveTransformerVAEPyro(dvae.NaiveTransformerVAE):
+
+    def __init__(self, *args, **kwargs):
+        super(NaiveTransformerVAEPyro, self).__init__(*args, **kwargs)
+
+    def model(self, x, annealing_factor=1.0):
+        b, l, _ = x.shape
+        pyro.module("ntfvae", self)
+
+        with pyro.plate_stack("data", [b, l]):
+            z_dist_prior = self.generate_z(x)
+            with poutine.scale(None, annealing_factor):
+                z = pyro.sample("z", z_dist_prior)
+            x_loc, x_scale, x_dist = self.generate_x(z, dvae.lag(x))
+            pyro.sample("obs", x_dist, obs=x)
+
+    def guide(self, x, annealing_factor=1.0):
+        b, l, _ = x.shape
+        pyro.module("ntfvae", self)
+
+        with pyro.plate_stack("data", [b, l]):
+            z_loc, z_scale, z_dist = self.inference(x)
+            with poutine.scale(None, annealing_factor):
+                z = pyro.sample("z", z_dist)

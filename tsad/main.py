@@ -17,8 +17,8 @@ from sklearn import metrics
 from tsad import utils
 from tsad.data import PickleDataset, PreparedData
 from tsad.config import Config
-from tsad.models.vae import VRNNPyro, RVAEPyro, SRNNPyro, OmniPyro, TransformerVAEPyro
-from tsad.models.dvae import VRNN, RVAE, SRNN, Omni, TransformerVAE
+from tsad.models.vae import VRNNPyro, RVAEPyro, SRNNPyro, OmniPyro, TransformerVAEPyro, NaiveTransformerVAEPyro
+from tsad.models.dvae import VRNN, RVAE, SRNN, Omni, TransformerVAE, NaiveTransformerVAE
 from tsad.wrapper import DvaeLightningWrapper, PyroLightningWrapper
 
 models = [
@@ -26,7 +26,8 @@ models = [
     RVAE, RVAEPyro,
     SRNN, SRNNPyro,
     Omni, OmniPyro,
-    TransformerVAE, TransformerVAEPyro
+    TransformerVAE, TransformerVAEPyro,
+    NaiveTransformerVAE, NaiveTransformerVAEPyro
 ]
 config = Config()
 logger = logging.getLogger("pytorch_lightning")
@@ -100,7 +101,7 @@ def train(prepared_data, args):
         return y_score, y_loc, y_scale
 
     scores, y_locs, y_scales = train_aux(n_features=prepared_data.n_features,
-                                         nhead=8, nlayers=2  # default  for transformer net
+                                         nhead=8  # default  for transformer net
                                          )
     anomaly_vect = prepared_data.test_anomaly[args.history_w - 1:]
     scores = scores.cpu().numpy()
@@ -182,6 +183,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", type=int, default=0, help="dataload num_worker setting")
     parser.add_argument("--min_epochs", type=int, default=20, help="min epochs")
     parser.add_argument("--clip", type=float, default=10, help="gradient clip")
+    parser.add_argument("--nlayers", type=int, default=2, help="num of transformer layers")
 
     args_ = parser.parse_args()
     # noinspection PyBroadException
