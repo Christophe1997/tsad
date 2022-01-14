@@ -359,14 +359,16 @@ class TransformerVAE(nn.Module):
         else:
             self.theta_dense = nn.Identity()
 
-    def encode(self, x):
+    def encode(self, x, mask_up=True):
         embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
         mask = torch.triu(x.new_full((x.size(1), x.size(1)), float('-inf')), diagonal=1)
+        if not mask_up:
+            mask = mask.T
         return self.phi_transformer_encoder(embedding, mask=mask)
 
     def inference(self, x, n_sample=1):
         b, l, _ = x.shape
-        h = self.encode(x)
+        h = self.encode(x, mask_up=False)
         z_loc = x.new_zeros([b, l, self.z_dim])
         z_scale = x.new_zeros([b, l, self.z_dim])
         z = x.new_zeros([b, l, self.z_dim])
@@ -454,9 +456,11 @@ class NaiveTransformerVAE(nn.Module):
 
         return x_loc, x_scale, x_dist
 
-    def encode(self, x):
+    def encode(self, x, mask_up=True):
         embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
         mask = torch.triu(x.new_full((x.size(1), x.size(1)), float('-inf')), diagonal=1)
+        if not mask_up:
+            mask = mask.T
         return self.phi_transformer_encoder(embedding, mask=mask)
 
     def inference(self, x):

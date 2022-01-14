@@ -191,7 +191,7 @@ class TransformerVAEPyro(dvae.TransformerVAE):
         b, l, _ = x.shape
         pyro.module("tfvae", self)
 
-        h = self.encode(x)
+        h = self.encode(x, mask_up=False)
         zt = x.new_zeros([b, self.z_dim])
 
         with pyro.plate("data", b):
