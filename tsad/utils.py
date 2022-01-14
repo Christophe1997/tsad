@@ -178,7 +178,7 @@ def get_last_ckpt(root, version=None):
     return ckpt_path
 
 
-def copy_score_vector(root, dest, suffixes=None):
+def copy_result(root, dest, suffixes=None, prefix="MIX", fp="test_score.pkl"):
     if not os.path.exists(dest):
         os.makedirs(dest)
 
@@ -187,14 +187,15 @@ def copy_score_vector(root, dest, suffixes=None):
         suffixes = set(e.split("_")[-1] for e in dirs)
     else:
         suffixes = set(suffixes)
+
     for s in suffixes:
         os.makedirs(os.path.join(dest, s), exist_ok=True)
         targets = [e for e in dirs if e.endswith(s)]
         for target in targets:
-            idx = target[4:-(len(s) + 1)]
+            idx = target[len(prefix) + 1:-(len(s) + 1)]
             version = get_last_version(os.path.join(root, target))
-            src = os.path.join(root, target, version, "test_score.pkl")
-            dst = os.path.join(dest, s, f"{idx}_test_score.pkl")
+            src = os.path.join(root, target, version, fp)
+            dst = os.path.join(dest, s, f"{idx}_{fp}")
             print(f"{src} -> {dst}")
             if os.path.exists(src):
                 shutil.copy2(src, dst)
