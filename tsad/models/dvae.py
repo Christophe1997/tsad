@@ -464,7 +464,7 @@ class NaiveTransformerVAE(nn.Module):
         return self.phi_transformer_encoder(embedding, mask=mask)
 
     def inference(self, x):
-        h = self.encode(x)
+        h = self.encode(x, mask_up=False)
         z_loc, z_scale, z_dist = self.phi_p_z_x(h, return_dist=True)
         return z_loc, z_scale, z_dist
 
