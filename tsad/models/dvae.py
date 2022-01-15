@@ -414,16 +414,17 @@ class TransformerVAE(nn.Module):
         return first_term if not return_loss else (first_term, (recon, kld))
 
 
-@register("ntfvae", "n_features", "z_dim", "nhead", "nlayers", "theta_dense", "dropout",
+@register("ntfvae", "n_features", "z_dim", "nhead", "nlayers", "dropout", "phi_mask_up",
           d_model="hidden_dim",
           dim_feedforward="dense_dim")
 class NaiveTransformerVAE(nn.Module):
     def __init__(self, n_features=1, d_model=256, z_dim=4, nhead=8, nlayers=6,
-                 dim_feedforward=1024, dropout=0.1, theta_dense=False):
+                 dim_feedforward=1024, dropout=0.1, phi_mask_up=False):
         super(NaiveTransformerVAE, self).__init__()
         self.z_dim = z_dim
         self.d_model = d_model
         self.n_features = n_features
+        self.phi_mask_up = phi_mask_up
 
         # inference
         self.phi_pos_encoder = PositionalEncoding(d_model, batch_first=True)
@@ -434,17 +435,12 @@ class NaiveTransformerVAE(nn.Module):
         self.phi_p_z_x = NormalParam(d_model, z_dim)
 
         # generation
-        if theta_dense:
-            self.theta_dense = MLPEmbedding(d_model + z_dim, d_model + z_dim, [d_model + z_dim], dropout=dropout,
-                                            activate=nn.ReLU())
-        else:
-            self.theta_dense = nn.Identity()
+        self.theta_z_embedding = Conv1DEmbedding(z_dim, d_model)
+        decode_layers = nn.TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
+                                                   norm_first=True)
+        self.theta_transformer_decoder = nn.TransformerDecoder(decode_layers, 1)
 
-        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
-                                                    norm_first=True)
-        self.theta_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
-
-        self.theta_p_x_z = NormalParam(d_model + z_dim, n_features)
+        self.theta_p_x_z = NormalParam(d_model, n_features)
 
     def generate_z(self, x):
         b, l, _ = x.shape
@@ -452,28 +448,26 @@ class NaiveTransformerVAE(nn.Module):
         scale = x.new_ones([b, l, self.z_dim])
         return dist.Normal(loc, scale).to_event(1)
 
-    def generate_x(self, z, x_lag):
-        h = self.theta_encode(x_lag)
-        z_with_x = torch.cat([z, h], dim=-1)
-        z_with_x = self.theta_dense(z_with_x)
-        x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_x, return_dist=True)
-
-        return x_loc, x_scale, x_dist
-
-    def theta_encode(self, x):
-        embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
-        mask = torch.triu(x.new_full((x.size(1), x.size(1)), float('-inf')), diagonal=1)
-        return self.theta_transformer_encoder(embedding, mask=mask)
-
-    def phi_encode(self, x, mask_up=True):
-        embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
+    def get_mask(self, x, mask_up=True):
         mask = torch.triu(x.new_full((x.size(1), x.size(1)), float('-inf')), diagonal=1)
         if not mask_up:
             mask = mask.T
-        return self.phi_transformer_encoder(embedding, mask=mask)
+
+        return mask
+
+    def generate_x(self, z, x_lag):
+        x_embedding = self.phi_x_embedding(x_lag) + self.phi_pos_encoder(x_lag)
+        z_embedding = self.theta_z_embedding(z)
+        mask = self.get_mask(x_lag)
+        h = self.theta_transformer_decoder(x_embedding, z_embedding, tgt_mask=mask, memory_mask=mask)
+        x_loc, x_scale, x_dist = self.theta_p_x_z(h, return_dist=True)
+
+        return x_loc, x_scale, x_dist
 
     def inference(self, x):
-        h = self.phi_encode(x, mask_up=False)
+        embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
+        mask = self.get_mask(x, mask_up=self.phi_mask_up)
+        h = self.phi_transformer_encoder(embedding, mask=mask)
         z_loc, z_scale, z_dist = self.phi_p_z_x(h, return_dist=True)
         return z_loc, z_scale, z_dist
 
