@@ -190,7 +190,7 @@ def copy_result(root, dest, suffixes=None, prefix="MIX", fp="test_score.pkl"):
 
     for s in suffixes:
         os.makedirs(os.path.join(dest, s), exist_ok=True)
-        targets = [e for e in dirs if e.endswith(s)]
+        targets = [e for e in dirs if e.split("_")[-1] == s]
         for target in targets:
             idx = target[len(prefix) + 1:-(len(s) + 1)]
             version = get_last_version(os.path.join(root, target))
