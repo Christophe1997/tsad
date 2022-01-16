@@ -437,12 +437,12 @@ class NaiveTransformerVAE(nn.Module):
         self.phi_p_z_x = NormalParam(d_model, z_dim)
 
         # generation
-        self.theta_self_atten = MultiHeadLayer(d_model, nhead, dropout=dropout, batch_first=True)
         nhead2 = nhead
         while (d_model + z_dim) % nhead2 != 0:
             nhead2 -= 2
-        self.theta_multihead = MultiHeadLayer(d_model + z_dim, nhead2, dropout=dropout, batch_first=True)
-        self.theta_feedforward = FeedforwardLayer(d_model + z_dim, dim_feedforward=dim_feedforward, dropout=dropout)
+        encoder_layers = nn.TransformerEncoderLayer(d_model + z_dim, nhead2, dim_feedforward, dropout, batch_first=True,
+                                                    norm_first=True)
+        self.theta_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
 
         self.theta_p_x_z = NormalParam(d_model + z_dim, n_features)
 
@@ -462,10 +462,9 @@ class NaiveTransformerVAE(nn.Module):
     def generate_x(self, z, x_lag):
         x_embedding = self.phi_x_embedding(x_lag) + self.phi_pos_encoder(x_lag)
         mask = self.get_mask(x_lag)
-        h = self.theta_self_atten(x_embedding, mask=mask)
+        h = self.phi_transformer_encoder(x_embedding, mask=mask)
         z_with_h = torch.cat([z, h], dim=-1)
-        z_with_h = self.theta_multihead(z_with_h, mask=mask)
-        z_with_h = self.theta_feedforward(z_with_h)
+        z_with_h = self.theta_transformer_encoder(z_with_h, mask=mask)
         x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_h, return_dist=True)
 
         return x_loc, x_scale, x_dist
