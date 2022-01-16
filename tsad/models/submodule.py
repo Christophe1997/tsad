@@ -1,3 +1,4 @@
+import copy
 from collections import OrderedDict
 
 import torch
@@ -126,3 +127,35 @@ class TimePositionalEncoding(nn.Module):
         else:
             # [l, b, n]
             return self.pe[:, :x.size(0)].transpose(0, 1)
+
+
+class MultiHeadLayer(nn.Module):
+    def __init__(self, d_model, nhead, dropout=0.1, batch_first=True, layer_norm_eps=1e-5):
+        super(MultiHeadLayer, self).__init__()
+        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=batch_first)
+        self.norm = nn.LayerNorm(d_model, eps=layer_norm_eps)
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, x, mask=None):
+        res = self.norm(x)
+        res = self.multihead_attn(res, res, res, attn_mask=mask, need_weights=False)[0]
+        res = self.dropout(res)
+        return x + res
+
+
+class FeedforwardLayer(nn.Module):
+
+    def __init__(self, d_model, dim_feedforward=1024, dropout=0.1, activate=nn.ReLU()):
+        super(FeedforwardLayer, self).__init__()
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.activate = activate
+        self.dropout1 = nn.Dropout(p=dropout)
+        self.dropout2 = nn.Dropout(p=dropout)
+
+    def forward(self, x):
+        x = self.activate(self.linear1(x))
+        x = self.dropout1(x)
+        x = self.linear2(x)
+        x = self.dropout2(x)
+        return x

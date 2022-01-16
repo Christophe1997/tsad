@@ -5,7 +5,8 @@ import pyro.distributions as dist
 import torch.distributions as tdist
 
 from tsad.config import register
-from tsad.models.submodule import NormalParam, MLPEmbedding, PositionalEncoding, Conv1DEmbedding
+from tsad.models.submodule import NormalParam, MLPEmbedding, PositionalEncoding, Conv1DEmbedding, MultiHeadLayer, \
+    FeedforwardLayer
 
 
 def reparameterization(mean, logvar):
@@ -418,6 +419,7 @@ class TransformerVAE(nn.Module):
           d_model="hidden_dim",
           dim_feedforward="dense_dim")
 class NaiveTransformerVAE(nn.Module):
+
     def __init__(self, n_features=1, d_model=256, z_dim=4, nhead=8, nlayers=6,
                  dim_feedforward=1024, dropout=0.1, phi_mask_up=False):
         super(NaiveTransformerVAE, self).__init__()
@@ -435,12 +437,14 @@ class NaiveTransformerVAE(nn.Module):
         self.phi_p_z_x = NormalParam(d_model, z_dim)
 
         # generation
-        self.theta_z_embedding = Conv1DEmbedding(z_dim, d_model)
-        decode_layers = nn.TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
-                                                   norm_first=True)
-        self.theta_transformer_decoder = nn.TransformerDecoder(decode_layers, 1)
+        self.theta_self_atten = MultiHeadLayer(d_model, nhead, dropout=dropout, batch_first=True)
+        nhead2 = nhead
+        while (d_model + z_dim) % nhead2 != 0:
+            nhead2 -= 2
+        self.theta_multihead = MultiHeadLayer(d_model + z_dim, nhead2, dropout=dropout, batch_first=True)
+        self.theta_feedforward = FeedforwardLayer(d_model + z_dim, dim_feedforward=dim_feedforward, dropout=dropout)
 
-        self.theta_p_x_z = NormalParam(d_model, n_features)
+        self.theta_p_x_z = NormalParam(d_model + z_dim, n_features)
 
     def generate_z(self, x):
         b, l, _ = x.shape
@@ -457,10 +461,12 @@ class NaiveTransformerVAE(nn.Module):
 
     def generate_x(self, z, x_lag):
         x_embedding = self.phi_x_embedding(x_lag) + self.phi_pos_encoder(x_lag)
-        z_embedding = self.theta_z_embedding(z)
         mask = self.get_mask(x_lag)
-        h = self.theta_transformer_decoder(x_embedding, z_embedding, tgt_mask=mask, memory_mask=mask)
-        x_loc, x_scale, x_dist = self.theta_p_x_z(h, return_dist=True)
+        h = self.theta_self_atten(x_embedding, mask=mask)
+        z_with_h = torch.cat([z, h], dim=-1)
+        z_with_h = self.theta_multihead(z_with_h, mask=mask)
+        z_with_h = self.theta_feedforward(z_with_h)
+        x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_h, return_dist=True)
 
         return x_loc, x_scale, x_dist
 
