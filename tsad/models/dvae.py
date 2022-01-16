@@ -415,13 +415,13 @@ class TransformerVAE(nn.Module):
         return first_term if not return_loss else (first_term, (recon, kld))
 
 
-@register("ntfvae", "n_features", "z_dim", "nhead", "nlayers", "dropout", "phi_mask_up",
+@register("ntfvae", "n_features", "z_dim", "nhead", "nlayers", "dropout", "phi_mask_up", "theta_dense",
           d_model="hidden_dim",
           dim_feedforward="dense_dim")
 class NaiveTransformerVAE(nn.Module):
 
     def __init__(self, n_features=1, d_model=256, z_dim=4, nhead=8, nlayers=6,
-                 dim_feedforward=1024, dropout=0.1, phi_mask_up=False):
+                 dim_feedforward=1024, dropout=0.1, phi_mask_up=False, theta_dense=False):
         super(NaiveTransformerVAE, self).__init__()
         self.z_dim = z_dim
         self.d_model = d_model
@@ -440,11 +440,17 @@ class NaiveTransformerVAE(nn.Module):
         nhead2 = nhead
         while (d_model + z_dim) % nhead2 != 0:
             nhead2 -= 2
-        encoder_layers = nn.TransformerEncoderLayer(d_model + z_dim, nhead2, dim_feedforward, dropout, batch_first=True,
+        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead2, dim_feedforward, dropout, batch_first=True,
                                                     norm_first=True)
-        self.theta_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
+        self.theta_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers - 1)
 
-        self.theta_p_x_z = NormalParam(d_model + z_dim, n_features)
+        if theta_dense:
+            self.theta_dense = MLPEmbedding(d_model + z_dim, d_model, [d_model], dropout=dropout,
+                                            activate=nn.ReLU())
+        else:
+            self.theta_dense = nn.Identity()
+
+        self.theta_p_x_z = NormalParam(d_model, n_features)
 
     def generate_z(self, x):
         b, l, _ = x.shape
@@ -464,6 +470,7 @@ class NaiveTransformerVAE(nn.Module):
         mask = self.get_mask(x_lag)
         h = self.phi_transformer_encoder(x_embedding, mask=mask)
         z_with_h = torch.cat([z, h], dim=-1)
+        z_with_h = self.theta_dense(z_with_h) + self.phi_pos_encoder(z_with_h)
         z_with_h = self.theta_transformer_encoder(z_with_h, mask=mask)
         x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_h, return_dist=True)
 

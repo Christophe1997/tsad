@@ -203,7 +203,7 @@ class TransformerVAEPyro(dvae.TransformerVAE):
                     zt = pyro.sample(f"z_{t}", zt_dist)
 
 
-@register("ntfvae_pyro", "n_features", "z_dim", "nhead", "nlayers", "dropout", "phi_mask_up",
+@register("ntfvae_pyro", "n_features", "z_dim", "nhead", "nlayers", "dropout", "phi_mask_up", "theta_dense",
           d_model="hidden_dim",
           dim_feedforward="dense_dim")
 class NaiveTransformerVAEPyro(dvae.NaiveTransformerVAE):
