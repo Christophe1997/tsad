@@ -437,10 +437,7 @@ class NaiveTransformerVAE(nn.Module):
         self.phi_p_z_x = NormalParam(d_model, z_dim)
 
         # generation
-        nhead2 = nhead
-        while (d_model + z_dim) % nhead2 != 0:
-            nhead2 -= 2
-        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead2, dim_feedforward, dropout, batch_first=True,
+        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
                                                     norm_first=True)
         self.theta_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers - 1)
 
