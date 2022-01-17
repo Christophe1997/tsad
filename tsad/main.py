@@ -101,7 +101,7 @@ def train(prepared_data, args):
         return y_score, y_loc, y_scale
 
     scores, y_locs, y_scales = train_aux(n_features=prepared_data.n_features,
-                                         nhead=8  # default  for transformer net
+                                         nhead=8, phi_mask_up=False  # default  for transformer net
                                          )
     anomaly_vect = prepared_data.test_anomaly[args.history_w - 1:]
     scores = scores.cpu().numpy()

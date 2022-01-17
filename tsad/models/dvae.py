@@ -448,12 +448,11 @@ class NaiveTransformerVAE(nn.Module):
             self.theta_dense = nn.Identity()
 
         self.theta_p_x_z = NormalParam(d_model, n_features)
+        self.theta_p_z = NormalParam(d_model, z_dim)
 
-    def generate_z(self, x):
-        b, l, _ = x.shape
-        loc = x.new_zeros([b, l, self.z_dim])
-        scale = x.new_ones([b, l, self.z_dim])
-        return dist.Normal(loc, scale).to_event(1)
+    def generate_z(self, h):
+        z_loc, z_scale, z_dist = self.theta_p_z(h, return_dist=True)
+        return z_loc, z_scale, z_dist
 
     def get_mask(self, x, mask_up=True):
         mask = torch.triu(x.new_full((x.size(1), x.size(1)), float('-inf')), diagonal=1)
@@ -462,29 +461,33 @@ class NaiveTransformerVAE(nn.Module):
 
         return mask
 
-    def generate_x(self, z, x_lag):
-        x_embedding = self.phi_x_embedding(x_lag) + self.phi_pos_encoder(x_lag)
-        mask = self.get_mask(x_lag)
-        h = self.phi_transformer_encoder(x_embedding, mask=mask)
+    def generate_x(self, z, h):
+
         z_with_h = torch.cat([z, h], dim=-1)
         z_with_h = self.theta_dense(z_with_h) + self.phi_pos_encoder(z_with_h)
+        mask = self.get_mask(z_with_h)
         z_with_h = self.theta_transformer_encoder(z_with_h, mask=mask)
         x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_h, return_dist=True)
 
         return x_loc, x_scale, x_dist
 
-    def inference(self, x):
+    def phi_encode(self, x, mask_up=True):
         embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
-        mask = self.get_mask(x, mask_up=self.phi_mask_up)
+        mask = self.get_mask(x, mask_up=mask_up)
         h = self.phi_transformer_encoder(embedding, mask=mask)
+        return h
+
+    def inference(self, x):
+        h = self.phi_encode(x, mask_up=self.phi_mask_up)
         z_loc, z_scale, z_dist = self.phi_p_z_x(h, return_dist=True)
         return z_loc, z_scale, z_dist
 
     def forward(self, x, return_prob=False, return_loss=True, n_sample=1):
+        h = self.phi_encode(lag(x))
         z_loc, z_scale, z_dist = self.inference(x)
         z = z_dist.rsample([n_sample]).mean(0)
-        y_loc, y_scale, y_dist = self.generate_x(z, lag(x))
-        z_dist_prior = self.generate_z(x)
+        y_loc, y_scale, y_dist = self.generate_x(z, h)
+        _, _, z_dist_prior = self.generate_z(h)
         recon = -y_dist.log_prob(x).sum()
         kld = tdist.kl_divergence(z_dist, z_dist_prior).sum()
 
