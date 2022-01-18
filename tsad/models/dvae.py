@@ -5,8 +5,7 @@ import pyro.distributions as dist
 import torch.distributions as tdist
 
 from tsad.config import register
-from tsad.models.submodule import NormalParam, MLPEmbedding, PositionalEncoding, Conv1DEmbedding, MultiHeadLayer, \
-    FeedforwardLayer
+from tsad.models.submodule import NormalParam, MLPEmbedding, PositionalEncoding, Conv1DEmbedding, TimePositionalEncoding
 
 
 def reparameterization(mean, logvar):
@@ -429,7 +428,7 @@ class NaiveTransformerVAE(nn.Module):
         self.phi_mask_up = phi_mask_up
 
         # inference
-        self.phi_pos_encoder = PositionalEncoding(d_model, batch_first=True)
+        self.phi_pos_encoder = TimePositionalEncoding(d_model, batch_first=True)
         self.phi_x_embedding = Conv1DEmbedding(n_features, d_model)
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
                                                     norm_first=True)
