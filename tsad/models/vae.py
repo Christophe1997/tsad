@@ -220,7 +220,7 @@ class NaiveTransformerVAEPyro(dvae.NaiveTransformerVAE):
             _, _, z_dist_prior = self.generate_z(h)
             with poutine.scale(None, annealing_factor):
                 z = pyro.sample("z", z_dist_prior)
-            x_loc, x_scale, x_dist = self.generate_x(z, h)
+            x_loc, x_scale, x_dist = self.generate_x(z)
             pyro.sample("obs", x_dist, obs=x)
 
     def guide(self, x, annealing_factor=1.0):
