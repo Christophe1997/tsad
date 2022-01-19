@@ -214,10 +214,7 @@ class NaiveTransformerVAEPyro(dvae.NaiveTransformerVAE):
     def model(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
         pyro.module("ntfvae", self)
-
-        x_lag = dvae.lag(x)
-        embedding = self.phi_x_embedding(x_lag) + self.phi_pos_encoder(x_lag)
-        h = self.theta_transformer_encoder(embedding, mask=self.get_mask(x_lag))
+        h = self.phi_encode(dvae.lag(x))
 
         with pyro.plate_stack("data", [b, l]):
             _, _, z_dist_prior = self.generate_z(h)
