@@ -199,3 +199,84 @@ def copy_result(root, dest, suffixes=None, prefix="MIX", fp="test_score.pkl", de
             print(f"{src} -> {dst}")
             if os.path.exists(src):
                 shutil.copy2(src, dst)
+
+
+# the below two methods come from InterFusion(https://github.com/zhhlee/InterFusion)
+# adjust for neg log prob
+
+def get_adjusted_composite_metrics(label, score):
+    assert len(score) == len(label)
+    splits = np.where(label[1:] != label[:-1])[0] + 1
+    is_anomaly = label[0] == 1
+    pos = 0
+    for sp in splits:
+        if is_anomaly:
+            score[pos:sp] = np.max(score[pos:sp])
+        is_anomaly = not is_anomaly
+        pos = sp
+    sp = len(label)
+    if is_anomaly:
+        score[pos:sp] = np.max(score[pos:sp])
+
+    # now get the adjust score for segment evaluation.
+    fpr, tpr, _ = metrics.roc_curve(y_true=label, y_score=score, drop_intermediate=False)
+    auroc = metrics.auc(fpr, tpr)
+    precision, recall, _ = metrics.precision_recall_curve(y_true=label, probas_pred=score)
+    # validate best f1
+    f1 = np.max(2 * precision * recall / (precision + recall + 1e-5))
+    ap = metrics.average_precision_score(y_true=label, y_score=score, average=None)
+    return auroc, ap, f1, precision, recall, fpr, tpr
+
+
+def get_best_f1(label, score):
+
+    score = -score
+    assert score.shape == label.shape
+    search_set = []
+    tot_anomaly = 0
+    for i in range(label.shape[0]):
+        tot_anomaly += (label[i] > 0.5)
+    flag = 0
+    cur_anomaly_len = 0
+    cur_min_anomaly_score = 1e5
+    for i in range(label.shape[0]):
+        if label[i] > 0.5:
+            # here for an anomaly
+            if flag == 1:
+                cur_anomaly_len += 1
+                cur_min_anomaly_score = score[i] if score[i] < cur_min_anomaly_score else cur_min_anomaly_score
+            else:
+                flag = 1
+                cur_anomaly_len = 1
+                cur_min_anomaly_score = score[i]
+        else:
+            # here for normal points
+            if flag == 1:
+                flag = 0
+                search_set.append((cur_min_anomaly_score, cur_anomaly_len, True))
+                search_set.append((score[i], 1, False))
+            else:
+                search_set.append((score[i], 1, False))
+    if flag == 1:
+        search_set.append((cur_min_anomaly_score, cur_anomaly_len, True))
+    search_set.sort(key=lambda x: x[0])
+    best_f1_res = - 1
+    threshold = 1
+    P = 0
+    TP = 0
+    best_P = 0
+    best_TP = 0
+    for i in range(len(search_set)):
+        P += search_set[i][1]
+        if search_set[i][2]:  # for an anomaly point
+            TP += search_set[i][1]
+        precision = TP / (P + 1e-5)
+        recall = TP / (tot_anomaly + 1e-5)
+        f1 = 2 * precision * recall / (precision + recall + 1e-5)
+        if f1 > best_f1_res:
+            best_f1_res = f1
+            threshold = search_set[i][0]
+            best_P = P
+            best_TP = TP
+
+    return best_f1_res, threshold
