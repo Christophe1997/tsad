@@ -214,13 +214,16 @@ class NaiveTransformerVAEPyro(dvae.NaiveTransformerVAE):
     def model(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
         pyro.module("ntfvae", self)
-        h = self.phi_encode(dvae.lag(x))
+
+        x_lag = dvae.lag(x)
+        embedding = self.phi_x_embedding(x_lag) + self.phi_pos_encoder(x_lag)
+        h = self.theta_transformer_encoder(embedding, mask=self.get_mask(x_lag))
 
         with pyro.plate_stack("data", [b, l]):
             _, _, z_dist_prior = self.generate_z(h)
             with poutine.scale(None, annealing_factor):
                 z = pyro.sample("z", z_dist_prior)
-            x_loc, x_scale, x_dist = self.generate_x(z)
+            x_loc, x_scale, x_dist = self.generate_x(z, h)
             pyro.sample("obs", x_dist, obs=x)
 
     def guide(self, x, annealing_factor=1.0):
