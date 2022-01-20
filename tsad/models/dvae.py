@@ -435,7 +435,7 @@ class NaiveTransformerVAE(nn.Module):
         self.phi_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
         self.phi_p_z_x = NormalParam(d_model, z_dim)
 
-        self.phi_nf = dist.transforms.spline(self.z_dim)
+        self.phi_nf = dist.transforms.spline_coupling(self.z_dim, count_bins=16)
 
         # generation
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
@@ -490,8 +490,11 @@ class NaiveTransformerVAE(nn.Module):
         z = z_dist.rsample([n_sample]).mean(0)
         y_loc, y_scale, y_dist = self.generate_x(z, h)
         _, _, z_dist_prior = self.generate_z(h)
-        recon = -y_dist.log_prob(x).sum()
-        kld = tdist.kl_divergence(z_dist, z_dist_prior).sum()
+        if return_loss:
+            recon = -y_dist.log_prob(x).sum()
+            kld = tdist.kl_divergence(z_dist, z_dist_prior).sum()
+        else:
+            recon, kld = None, None
 
         first_term = y_loc if not return_prob else (y_loc, y_scale)
         return first_term if not return_loss else (first_term, (recon, kld))
