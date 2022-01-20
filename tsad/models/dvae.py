@@ -435,6 +435,8 @@ class NaiveTransformerVAE(nn.Module):
         self.phi_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
         self.phi_p_z_x = NormalParam(d_model, z_dim)
 
+        self.phi_nf = dist.transforms.spline(self.z_dim)
+
         # generation
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
                                                     norm_first=True)
@@ -479,6 +481,7 @@ class NaiveTransformerVAE(nn.Module):
     def inference(self, x):
         h = self.phi_encode(x, mask_up=self.phi_mask_up)
         z_loc, z_scale, z_dist = self.phi_p_z_x(h, return_dist=True)
+        z_dist = dist.TransformedDistribution(z_dist, [self.phi_nf])
         return z_loc, z_scale, z_dist
 
     def forward(self, x, return_prob=False, return_loss=True, n_sample=1):
