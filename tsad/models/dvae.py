@@ -420,7 +420,7 @@ class TransformerVAE(nn.Module):
 class NaiveTransformerVAE(nn.Module):
 
     def __init__(self, n_features=1, d_model=256, z_dim=4, nhead=8, nlayers=6,
-                 dim_feedforward=1024, dropout=0.1, phi_mask_up=False, theta_dense=False):
+                 dim_feedforward=1024, dropout=0.1, phi_mask_up=False, theta_dense=False, num_nf=20):
         super(NaiveTransformerVAE, self).__init__()
         self.z_dim = z_dim
         self.d_model = d_model
@@ -435,7 +435,7 @@ class NaiveTransformerVAE(nn.Module):
         self.phi_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
         self.phi_p_z_x = NormalParam(d_model, z_dim)
 
-        self.phi_nf = dist.transforms.spline_coupling(self.z_dim, count_bins=16)
+        self.phi_nf = nn.ModuleList(dist.transforms.planar(z_dim) for _ in range(num_nf))
 
         # generation
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
@@ -481,7 +481,7 @@ class NaiveTransformerVAE(nn.Module):
     def inference(self, x):
         h = self.phi_encode(x, mask_up=self.phi_mask_up)
         z_loc, z_scale, z_dist = self.phi_p_z_x(h, return_dist=True)
-        z_dist = dist.TransformedDistribution(z_dist, [self.phi_nf])
+        z_dist = dist.TransformedDistribution(z_dist, [nf for nf in self.phi_nf])
         return z_loc, z_scale, z_dist
 
     def forward(self, x, return_prob=False, return_loss=True, n_sample=1):
