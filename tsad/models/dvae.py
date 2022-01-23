@@ -445,12 +445,10 @@ class NaiveTransformerVAE(nn.Module):
             self.theta_dense = nn.Identity()
 
         self.theta_p_x_z = NormalParam(d_model, n_features)
+        self.theta_p_z = NormalParam(d_model, z_dim)
 
     def generate_z(self, h):
-        b, l, _ = h.shape
-        z_loc = h.new_zeros([b, l, self.z_dim])
-        z_scale = h.new_ones([b, l, self.z_dim])
-        z_dist = dist.Normal(z_loc, z_scale).to_event(1)
+        z_loc, z_scale, z_dist = self.theta_p_z(h, return_dist=True)
         return z_loc, z_scale, z_dist
 
     def get_mask(self, x, mask_up=True):
