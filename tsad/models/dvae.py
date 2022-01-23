@@ -435,24 +435,25 @@ class NaiveTransformerVAE(nn.Module):
         self.phi_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
         self.phi_p_z_x = NormalParam(d_model, z_dim)
 
-        self.phi_nf = nn.ModuleList(dist.transforms.planar(z_dim) for _ in range(num_nf))
-
         # generation
+        self.theta_decoder = nn.GRU(d_model + z_dim, d_model, batch_first=True)
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
                                                     norm_first=True)
         self.theta_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
 
         if theta_dense:
-            self.theta_dense = MLPEmbedding(d_model + z_dim, d_model + z_dim, [d_model + z_dim], dropout=dropout,
+            self.theta_dense = MLPEmbedding(d_model, d_model, [d_model], dropout=dropout,
                                             activate=nn.ReLU())
         else:
             self.theta_dense = nn.Identity()
 
-        self.theta_p_x_z = NormalParam(d_model + z_dim, n_features)
-        self.theta_p_z = NormalParam(d_model, z_dim)
+        self.theta_p_x_z = NormalParam(d_model, n_features)
 
     def generate_z(self, h):
-        z_loc, z_scale, z_dist = self.theta_p_z(h, return_dist=True)
+        b, l, _ = h.shape
+        z_loc = h.new_zeros([b, l, self.z_dim])
+        z_scale = h.new_ones([b, l, self.z_dim])
+        z_dist = dist.Normal(z_loc, z_scale).to_event(1)
         return z_loc, z_scale, z_dist
 
     def get_mask(self, x, mask_up=True):
@@ -465,6 +466,7 @@ class NaiveTransformerVAE(nn.Module):
     def generate_x(self, z, h):
 
         z_with_h = torch.cat([z, h], dim=-1)
+        z_with_h, _ = self.theta_decoder(z_with_h)
         z_with_h = self.theta_dense(z_with_h)
         x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_h, return_dist=True)
 
@@ -472,22 +474,17 @@ class NaiveTransformerVAE(nn.Module):
 
     def phi_encode(self, x, mask_up=True):
         embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
-        h = self.phi_transformer_encoder(embedding)
+        mask = self.get_mask(x, mask_up=mask_up)
+        h = self.phi_transformer_encoder(embedding, mask=mask)
         return h
-
-    def theta_encode(self, x):
-        embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
-        mask = self.get_mask(x, mask_up=True)
-        return self.theta_transformer_encoder(embedding, mask)
 
     def inference(self, x):
         h = self.phi_encode(x, mask_up=self.phi_mask_up)
         z_loc, z_scale, z_dist = self.phi_p_z_x(h, return_dist=True)
-        z_dist = dist.TransformedDistribution(z_dist, [nf for nf in self.phi_nf])
         return z_loc, z_scale, z_dist
 
     def forward(self, x, return_prob=False, return_loss=True, n_sample=1):
-        h = self.theta_encode(lag(x))
+        h = self.phi_encode(lag(x))
         z_loc, z_scale, z_dist = self.inference(x)
         z = z_dist.rsample([n_sample]).mean(0)
         y_loc, y_scale, y_dist = self.generate_x(z, h)
