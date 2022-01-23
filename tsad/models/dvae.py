@@ -437,9 +437,6 @@ class NaiveTransformerVAE(nn.Module):
 
         # generation
         self.theta_decoder = nn.GRU(d_model + z_dim, d_model, batch_first=True)
-        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
-                                                    norm_first=True)
-        self.theta_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
 
         if theta_dense:
             self.theta_dense = MLPEmbedding(d_model, d_model, [d_model], dropout=dropout,
