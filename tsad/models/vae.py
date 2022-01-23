@@ -214,7 +214,7 @@ class NaiveTransformerVAEPyro(dvae.NaiveTransformerVAE):
     def model(self, x, annealing_factor=1.0):
         b, l, _ = x.shape
         pyro.module("ntfvae", self)
-        h = self.phi_encode(dvae.lag(x))
+        h = self.theta_encode(dvae.lag(x))
 
         with pyro.plate_stack("data", [b, l]):
             _, _, z_dist_prior = self.generate_z(h)

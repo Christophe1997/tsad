@@ -440,15 +440,15 @@ class NaiveTransformerVAE(nn.Module):
         # generation
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
                                                     norm_first=True)
-        self.theta_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers - 1)
+        self.theta_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
 
         if theta_dense:
-            self.theta_dense = MLPEmbedding(d_model + z_dim, d_model, [d_model], dropout=dropout,
+            self.theta_dense = MLPEmbedding(d_model + z_dim, d_model + z_dim, [d_model + z_dim], dropout=dropout,
                                             activate=nn.ReLU())
         else:
             self.theta_dense = nn.Identity()
 
-        self.theta_p_x_z = NormalParam(d_model, n_features)
+        self.theta_p_x_z = NormalParam(d_model + z_dim, n_features)
         self.theta_p_z = NormalParam(d_model, z_dim)
 
     def generate_z(self, h):
@@ -465,18 +465,20 @@ class NaiveTransformerVAE(nn.Module):
     def generate_x(self, z, h):
 
         z_with_h = torch.cat([z, h], dim=-1)
-        z_with_h = self.theta_dense(z_with_h) + self.phi_pos_encoder(z_with_h)
-        mask = self.get_mask(z_with_h)
-        z_with_h = self.theta_transformer_encoder(z_with_h, mask=mask)
+        z_with_h = self.theta_dense(z_with_h)
         x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_h, return_dist=True)
 
         return x_loc, x_scale, x_dist
 
     def phi_encode(self, x, mask_up=True):
         embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
-        mask = self.get_mask(x, mask_up=mask_up)
-        h = self.phi_transformer_encoder(embedding, mask=mask)
+        h = self.phi_transformer_encoder(embedding)
         return h
+
+    def theta_encode(self, x):
+        embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
+        mask = self.get_mask(x, mask_up=True)
+        return self.theta_transformer_encoder(embedding, mask)
 
     def inference(self, x):
         h = self.phi_encode(x, mask_up=self.phi_mask_up)
@@ -485,7 +487,7 @@ class NaiveTransformerVAE(nn.Module):
         return z_loc, z_scale, z_dist
 
     def forward(self, x, return_prob=False, return_loss=True, n_sample=1):
-        h = self.phi_encode(lag(x))
+        h = self.theta_encode(lag(x))
         z_loc, z_scale, z_dist = self.inference(x)
         z = z_dist.rsample([n_sample]).mean(0)
         y_loc, y_scale, y_dist = self.generate_x(z, h)

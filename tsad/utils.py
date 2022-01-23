@@ -196,8 +196,8 @@ def copy_result(root, dest, suffixes=None, prefix="MIX", fp="test_score.pkl", de
             version = get_last_version(os.path.join(root, target)) if default_version is None else default_version
             src = os.path.join(root, target, version, fp)
             dst = os.path.join(dest, s, f"{idx}_{fp}")
-            print(f"{src} -> {dst}")
             if os.path.exists(src):
+                print(f"{src} -> {dst}")
                 shutil.copy2(src, dst)
 
 
