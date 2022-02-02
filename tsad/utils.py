@@ -230,7 +230,6 @@ def get_adjusted_composite_metrics(label, score):
 
 def get_best_f1(label, score):
 
-    score = -score
     assert score.shape == label.shape
     search_set = []
     tot_anomaly = 0
@@ -238,28 +237,29 @@ def get_best_f1(label, score):
         tot_anomaly += (label[i] > 0.5)
     flag = 0
     cur_anomaly_len = 0
-    cur_min_anomaly_score = 1e5
+    cur_max_anomaly_score = -1e5
     for i in range(label.shape[0]):
         if label[i] > 0.5:
             # here for an anomaly
             if flag == 1:
                 cur_anomaly_len += 1
-                cur_min_anomaly_score = score[i] if score[i] < cur_min_anomaly_score else cur_min_anomaly_score
+                cur_max_anomaly_score = score[i] if score[i] > cur_max_anomaly_score else cur_max_anomaly_score
             else:
                 flag = 1
                 cur_anomaly_len = 1
-                cur_min_anomaly_score = score[i]
+                cur_max_anomaly_score = score[i]
         else:
             # here for normal points
             if flag == 1:
                 flag = 0
-                search_set.append((cur_min_anomaly_score, cur_anomaly_len, True))
+                search_set.append((cur_max_anomaly_score, cur_anomaly_len, True))
                 search_set.append((score[i], 1, False))
             else:
                 search_set.append((score[i], 1, False))
     if flag == 1:
-        search_set.append((cur_min_anomaly_score, cur_anomaly_len, True))
+        search_set.append((cur_max_anomaly_score, cur_anomaly_len, True))
     search_set.sort(key=lambda x: x[0])
+    search_set.reverse()
     best_f1_res = - 1
     threshold = 1
     P = 0

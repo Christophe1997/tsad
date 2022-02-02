@@ -6,6 +6,7 @@ import torch.distributions as tdist
 
 from tsad.config import register
 from tsad.models.submodule import NormalParam, MLPEmbedding, PositionalEncoding, Conv1DEmbedding
+from tsad.models.prob_attn import Encoder, EncoderLayer, ProbAttention, AttentionLayer, ConvLayer
 
 
 def reparameterization(mean, logvar):
@@ -420,7 +421,7 @@ class TransformerVAE(nn.Module):
 class NaiveTransformerVAE(nn.Module):
 
     def __init__(self, n_features=1, d_model=256, z_dim=4, nhead=8, nlayers=6,
-                 dim_feedforward=1024, dropout=0.1, phi_mask_up=False, theta_dense=False, num_nf=20):
+                 dim_feedforward=1024, dropout=0.1, phi_mask_up=False, theta_dense=False):
         super(NaiveTransformerVAE, self).__init__()
         self.z_dim = z_dim
         self.d_model = d_model
@@ -430,6 +431,23 @@ class NaiveTransformerVAE(nn.Module):
         # inference
         self.phi_pos_encoder = PositionalEncoding(d_model, batch_first=True)
         self.phi_x_embedding = Conv1DEmbedding(n_features, d_model)
+
+        self.phi_prob_encoder = Encoder(
+            [
+                EncoderLayer(
+                    AttentionLayer(
+                        ProbAttention(False, 5, attention_dropout=dropout, output_attention=False),
+                        d_model, nhead, mix=False),
+                    d_model,
+                    dim_feedforward,
+                    dropout=dropout,
+                    activation='gelu'
+                ) for _ in range(nlayers)
+            ],
+            None,
+            norm_layer=torch.nn.LayerNorm(d_model)
+        )
+
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
                                                     norm_first=True)
         self.phi_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
@@ -474,7 +492,9 @@ class NaiveTransformerVAE(nn.Module):
         return h
 
     def inference(self, x):
-        h = self.phi_encode(x, mask_up=self.phi_mask_up)
+        embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
+        h, _ = self.phi_prob_encoder(embedding)
+        print(h.shape)
         z_loc, z_scale, z_dist = self.phi_p_z_x(h, return_dist=True)
         return z_loc, z_scale, z_dist
 
