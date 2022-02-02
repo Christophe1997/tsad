@@ -77,7 +77,7 @@ class PyroLightningWrapper(pl.LightningModule):
         self.save_hyperparameters()
 
         self.min_annealing_factor = 0.25
-        self.annealing_epochs = 10
+        self.annealing_epochs = 5
         self.epoch_idx = 0
         self.num_batches = None
 

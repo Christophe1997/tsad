@@ -454,20 +454,35 @@ class NaiveTransformerVAE(nn.Module):
         self.phi_p_z_x = NormalParam(d_model, z_dim)
 
         # generation
-        self.theta_decoder = nn.GRU(d_model + z_dim, d_model, batch_first=True)
+        self.theta_decoder = Encoder(
+            [
+                EncoderLayer(
+                    AttentionLayer(
+                        ProbAttention(False, 5, attention_dropout=dropout, output_attention=False),
+                        d_model, nhead, mix=False),
+                    d_model,
+                    dim_feedforward,
+                    dropout=dropout,
+                    activation='gelu'
+                ) for _ in range(nlayers - 1)
+            ],
+            None,
+            norm_layer=torch.nn.LayerNorm(d_model)
+        )
 
         if theta_dense:
-            self.theta_dense = MLPEmbedding(d_model, d_model, [d_model], dropout=dropout,
+            self.theta_dense = MLPEmbedding(d_model + z_dim, d_model, [d_model], dropout=dropout,
                                             activate=nn.ReLU())
         else:
             self.theta_dense = nn.Identity()
 
         self.theta_p_x_z = NormalParam(d_model, n_features)
-        self.theta_p_z = NormalParam(d_model, z_dim)
 
     def generate_z(self, h):
-        z_loc, z_scale, z_dist = self.theta_p_z(h, return_dist=True)
-        return z_loc, z_scale, z_dist
+        b, l, _ = h.shape
+        loc = h.new_zeros([b, l, self.z_dim])
+        scale = h.new_ones([b, l, self.z_dim])
+        return loc, scale, dist.Normal(loc, scale).to_event(1)
 
     def get_mask(self, x, mask_up=True):
         mask = torch.triu(x.new_full((x.size(1), x.size(1)), float('-inf')), diagonal=1)
@@ -479,8 +494,8 @@ class NaiveTransformerVAE(nn.Module):
     def generate_x(self, z, h):
 
         z_with_h = torch.cat([z, h], dim=-1)
-        z_with_h, _ = self.theta_decoder(z_with_h)
         z_with_h = self.theta_dense(z_with_h)
+        z_with_h, _ = self.theta_decoder(z_with_h)
         x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_h, return_dist=True)
 
         return x_loc, x_scale, x_dist
