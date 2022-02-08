@@ -9,7 +9,7 @@ from torch import nn
 
 class NormalParam(nn.Module):
 
-    def __init__(self, input_dim, output_dim, eps=1e-4):
+    def __init__(self, input_dim, output_dim, eps=1e-5):
         super(NormalParam, self).__init__()
         self.x2mu = nn.Linear(input_dim, output_dim)
         self.x2scale = nn.Sequential(
@@ -136,16 +136,16 @@ class MultiHeadLayer(nn.Module):
         self.norm = nn.LayerNorm(d_model, eps=layer_norm_eps)
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mem, mask=None):
         res = self.norm(x)
-        res = self.multihead_attn(res, res, res, attn_mask=mask, need_weights=False)[0]
+        res = self.multihead_attn(res, mem, mem, attn_mask=mask, need_weights=False)[0]
         res = self.dropout(res)
         return x + res
 
 
 class FeedforwardLayer(nn.Module):
 
-    def __init__(self, d_model, dim_feedforward=1024, dropout=0.1, activate=nn.ReLU()):
+    def __init__(self, d_model, dim_feedforward=1024, dropout=0.1, activate=nn.LeakyReLU()):
         super(FeedforwardLayer, self).__init__()
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -159,3 +159,28 @@ class FeedforwardLayer(nn.Module):
         x = self.linear2(x)
         x = self.dropout2(x)
         return x
+
+
+class DecoderLayer(nn.Module):
+    def __init__(self, d_model, nhead, dim_feedforward=1024, dropout=0.1, batch_first=True):
+        super(DecoderLayer, self).__init__()
+        self.multihead = MultiHeadLayer(d_model, nhead, dropout=dropout, batch_first=batch_first)
+        self.feedforward = FeedforwardLayer(d_model, dim_feedforward, dropout=dropout)
+
+    def forward(self, x, mem, mask=None):
+        res = self.multihead(x, mem, mask=mask)
+        res = self.feedforward(res)
+        return res
+
+
+class Decoder(nn.Module):
+    def __init__(self, decoder_layer, num_layers):
+        super(Decoder, self).__init__()
+        self.layers = nn.ModuleList([copy.deepcopy(decoder_layer) for _ in range(num_layers)])
+        self.num_layers = num_layers
+
+    def forward(self, x, mem, mask=None):
+        res = x
+        for mod in self.layers:
+            res = mod(res, mem, mask=mask)
+        return res
