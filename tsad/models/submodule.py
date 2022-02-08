@@ -162,14 +162,15 @@ class FeedforwardLayer(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward=1024, dropout=0.1, batch_first=True):
+    def __init__(self, d_model, nhead, dim_feedforward=1024, dropout=0.1, batch_first=True, layer_norm_eps=1e-5):
         super(DecoderLayer, self).__init__()
         self.multihead = MultiHeadLayer(d_model, nhead, dropout=dropout, batch_first=batch_first)
         self.feedforward = FeedforwardLayer(d_model, dim_feedforward, dropout=dropout)
+        self.norm = nn.LayerNorm(d_model, eps=layer_norm_eps)
 
     def forward(self, x, mem, mask=None):
         res = self.multihead(x, mem, mask=mask)
-        res = self.feedforward(res)
+        res = self.feedforward(self.norm(res))
         return res
 
 
