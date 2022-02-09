@@ -5,7 +5,7 @@ import pyro.distributions as dist
 import torch.distributions as tdist
 
 from tsad.config import register
-from tsad.models.submodule import NormalParam, MLPEmbedding, PositionalEncoding, Conv1DEmbedding, DecoderLayer, Decoder
+from tsad.models.submodule import NormalParam, MLPEmbedding, PositionalEncoding, Conv1DEmbedding
 
 
 def reparameterization(mean, logvar):
@@ -439,8 +439,7 @@ class NaiveTransformerVAE(nn.Module):
         self.phi_p_z_x = NormalParam(d_model, z_dim)
 
         # generation
-        decoder_layers = DecoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True)
-        self.theta_decoder = Decoder(decoder_layers, nlayers - 1)
+        self.theta_decoder = nn.TransformerEncoder(encoder_layers, nlayers - 1)
 
         if theta_dense:
             self.theta_dense = MLPEmbedding(d_model + z_dim, d_model, [d_model], dropout=dropout,
@@ -467,7 +466,7 @@ class NaiveTransformerVAE(nn.Module):
         z_with_h = torch.cat([z, h], dim=-1)
         z_with_h = self.theta_dense(z_with_h)
         mask = self.get_mask(z_with_h)
-        z_with_h = self.theta_decoder(h, z_with_h, mask=mask)
+        z_with_h = self.theta_decoder(h, mask=mask)
         x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_h, return_dist=True)
 
         return x_loc, x_scale, x_dist
