@@ -96,9 +96,9 @@ class Anomaly(enum.Enum):
 
 
 class SPOTJudge:
-    def __init__(self, inits, t=0, q=0.01):
-        self.t = t
-        self.peaks = list(map(lambda x: x - t, inits))
+    def __init__(self, inits, t0=None, q=0.01):
+        self.t = t0
+        self.peaks = list(inits[inits > t0] - t0)
         self.n = inits.shape[0]
         self.q = q
         self.zq = self.calc_threshold(*self.find_params())
@@ -154,17 +154,34 @@ class SPOTJudge:
 
     def find_params(self, num_x=8):
         bounds1, bounds2 = self.get_bounds()
-        peaks = np.asarray(self.peaks, np.float32)
+        peaks = np.asarray(self.peaks, np.float64)
         f = lambda x: self.ux(x, peaks) * self.vx(x, peaks) - 1
 
         def target(x):
+            x = np.asarray(x, np.float64)
             res = np.vectorize(f)(x)
             res = res ** 2
             res = np.sum(res)
             return res
 
+        res1, res2 = None, None
+
+        x0 = np.random.uniform(bounds1[0], bounds1[1], (num_x,))
+        opt_res = optimize.minimize(target, method="L-BFGS-B", bounds=[bounds1] * num_x, x0=x0)
+        if opt_res.success:
+            res1 = opt_res.x
+
         x0 = np.random.uniform(bounds2[0], bounds2[1], (num_x,))
-        xt = optimize.minimize(target, method="L-BFGS-B", bounds=[bounds1, bounds2], x0=x0)
+        opt_res = optimize.minimize(target, method="L-BFGS-B", bounds=[bounds2] * num_x, x0=x0)
+        if opt_res.success:
+            res2 = opt_res.x
+
+        if res1 is not None and res2 is not None:
+            res = np.hstack([res1, res2])
+        elif res1 is None:
+            res = res2
+        else:
+            res = res1
 
         def gamma_sigma(v):
             g = self.vx(v, peaks) - 1
@@ -173,10 +190,63 @@ class SPOTJudge:
 
         max_likelihood = -np.inf
         gamma, sigmma = 0, 0
-        for gi, si in map(gamma_sigma, xt):
+        for gi, si in map(gamma_sigma, res):
             p = self.likelihood(gi, si, peaks)
             if p > max_likelihood:
                 max_likelihood = p
                 gamma, sigmma = gi, si
 
         return gamma, sigmma
+
+
+class EventDetector:
+
+    @staticmethod
+    def hamming_weight(n):
+        count = 0
+        while n > 0:
+            n = n & (n - 1)
+            count += 1
+
+        return count
+
+    @staticmethod
+    def similarity(n1, n2):
+        res = (EventDetector.hamming_weight(n1) * EventDetector.hamming_weight(n2)) ** 0.5
+        return EventDetector.hamming_weight(n1 & n2) / res
+
+    def __init__(self, size, pu=0.79, pl=0.11, th=0.5, a=0.5):
+        self.size = size
+        self.pu = pu
+        self.pl = pl
+        self.th = th
+        self.a = a
+
+        self.aset = {2 ** size - 1}
+
+    @staticmethod
+    def array2int(arr):
+        arr = np.array(arr, dtype=np.int32)
+        return int(f"0b{''.join(map(str, arr))}", 2)
+
+    def is_anomaly(self, event):
+        event_n = self.array2int(event)
+        pe = self.hamming_weight(event_n) / self.size
+        if pe > self.pu:
+            self.aset.add(event_n)
+            return True
+        elif pe < self.pl:
+            return False
+        else:
+            sim_max = 0
+            for r in self.aset:
+                sim = self.similarity(r, event_n)
+                if sim > sim_max:
+                    sim_max = sim
+
+            if sim_max * self.a + (1 - self.a) * pe > self.th:
+                self.aset.add(event_n)
+                return True
+            else:
+                return False
+

@@ -6,6 +6,7 @@ import torch.distributions as tdist
 
 from tsad.config import register
 from tsad.models.submodule import NormalParam, MLPEmbedding, PositionalEncoding, Conv1DEmbedding
+from tsad.models.prob_attn import Encoder, EncoderLayer, ProbAttention, AttentionLayer
 
 
 def reparameterization(mean, logvar):
@@ -431,19 +432,33 @@ class NaiveTransformerVAE(nn.Module):
         self.phi_pos_encoder = PositionalEncoding(d_model, batch_first=True)
         self.phi_x_embedding = Conv1DEmbedding(n_features, d_model)
 
-        self.phi_x_embedding = Conv1DEmbedding(n_features, d_model)
+        self.phi_prob_encoder = Encoder(
+            [
+                EncoderLayer(
+                    AttentionLayer(
+                        ProbAttention(False, 5, attention_dropout=dropout, output_attention=False),
+                        d_model, nhead, mix=False),
+                    d_model,
+                    dim_feedforward,
+                    dropout=dropout,
+                    activation='gelu'
+                ) for _ in range(nlayers)
+            ],
+            None,
+            norm_layer=torch.nn.LayerNorm(d_model)
+        )
+
         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
                                                     norm_first=True)
         self.phi_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
-
         self.phi_p_z_x = NormalParam(d_model, z_dim)
 
         # generation
-        self.theta_decoder = nn.TransformerEncoder(encoder_layers, nlayers - 1)
+        self.theta_decoder = nn.GRU(d_model + z_dim, d_model, batch_first=True)
 
         if theta_dense:
-            self.theta_dense = MLPEmbedding(d_model + z_dim, d_model, [d_model], dropout=dropout,
-                                            activate=nn.LeakyReLU())
+            self.theta_dense = MLPEmbedding(d_model, d_model, [d_model], dropout=dropout,
+                                            activate=nn.ReLU())
         else:
             self.theta_dense = nn.Identity()
 
@@ -464,9 +479,8 @@ class NaiveTransformerVAE(nn.Module):
     def generate_x(self, z, h):
 
         z_with_h = torch.cat([z, h], dim=-1)
+        z_with_h, _ = self.theta_decoder(z_with_h)
         z_with_h = self.theta_dense(z_with_h)
-        mask = self.get_mask(z_with_h)
-        z_with_h = self.theta_decoder(h, mask=mask)
         x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_h, return_dist=True)
 
         return x_loc, x_scale, x_dist
@@ -478,7 +492,8 @@ class NaiveTransformerVAE(nn.Module):
         return h
 
     def inference(self, x):
-        h = self.phi_encode(x, mask_up=self.phi_mask_up)
+        embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
+        h, _ = self.phi_prob_encoder(embedding)
         z_loc, z_scale, z_dist = self.phi_p_z_x(h, return_dist=True)
         return z_loc, z_scale, z_dist
 
@@ -496,3 +511,83 @@ class NaiveTransformerVAE(nn.Module):
 
         first_term = y_loc if not return_prob else (y_loc, y_scale)
         return first_term if not return_loss else (first_term, (recon, kld))
+
+# class NaiveTransformerVAE(nn.Module):
+#
+#     def __init__(self, n_features=1, d_model=256, z_dim=4, nhead=8, nlayers=6,
+#                  dim_feedforward=1024, dropout=0.1, phi_mask_up=False, theta_dense=False):
+#         super(NaiveTransformerVAE, self).__init__()
+#         self.z_dim = z_dim
+#         self.d_model = d_model
+#         self.n_features = n_features
+#         self.phi_mask_up = phi_mask_up
+#
+#         # inference
+#         self.phi_pos_encoder = PositionalEncoding(d_model, batch_first=True)
+#         self.phi_x_embedding = Conv1DEmbedding(n_features, d_model)
+#
+#         self.phi_x_embedding = Conv1DEmbedding(n_features, d_model)
+#         encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True,
+#                                                     norm_first=True)
+#         self.phi_transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
+#
+#         self.phi_p_z_x = NormalParam(d_model, z_dim)
+#
+#         # generation
+#         self.theta_decoder = nn.TransformerEncoder(encoder_layers, nlayers - 1)
+#
+#         if theta_dense:
+#             self.theta_dense = MLPEmbedding(d_model + z_dim, d_model, [d_model], dropout=dropout,
+#                                             activate=nn.LeakyReLU())
+#         else:
+#             self.theta_dense = nn.Identity()
+#
+#         self.theta_p_x_z = NormalParam(d_model, n_features)
+#         self.theta_p_z = NormalParam(d_model, z_dim)
+#
+#     def generate_z(self, h):
+#         z_loc, z_scale, z_dist = self.theta_p_z(h, return_dist=True)
+#         return z_loc, z_scale, z_dist
+#
+#     def get_mask(self, x, mask_up=True):
+#         mask = torch.triu(x.new_full((x.size(1), x.size(1)), float('-inf')), diagonal=1)
+#         if not mask_up:
+#             mask = mask.T
+#
+#         return mask
+#
+#     def generate_x(self, z, h):
+#
+#         z_with_h = torch.cat([z, h], dim=-1)
+#         z_with_h = self.theta_dense(z_with_h)
+#         mask = self.get_mask(z_with_h)
+#         z_with_h = self.theta_decoder(h, mask=mask)
+#         x_loc, x_scale, x_dist = self.theta_p_x_z(z_with_h, return_dist=True)
+#
+#         return x_loc, x_scale, x_dist
+#
+#     def phi_encode(self, x, mask_up=True):
+#         embedding = self.phi_x_embedding(x) + self.phi_pos_encoder(x)
+#         mask = self.get_mask(x, mask_up=mask_up)
+#         h = self.phi_transformer_encoder(embedding, mask=mask)
+#         return h
+#
+#     def inference(self, x):
+#         h = self.phi_encode(x, mask_up=self.phi_mask_up)
+#         z_loc, z_scale, z_dist = self.phi_p_z_x(h, return_dist=True)
+#         return z_loc, z_scale, z_dist
+#
+#     def forward(self, x, return_prob=False, return_loss=True, n_sample=1):
+#         h = self.phi_encode(lag(x))
+#         z_loc, z_scale, z_dist = self.inference(x)
+#         z = z_dist.rsample([n_sample]).mean(0)
+#         y_loc, y_scale, y_dist = self.generate_x(z, h)
+#         _, _, z_dist_prior = self.generate_z(h)
+#         if return_loss:
+#             recon = -y_dist.log_prob(x).sum()
+#             kld = tdist.kl_divergence(z_dist, z_dist_prior).sum()
+#         else:
+#             recon, kld = None, None
+#
+#         first_term = y_loc if not return_prob else (y_loc, y_scale)
+#         return first_term if not return_loss else (first_term, (recon, kld))
